@@ -9,9 +9,10 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .engine import OverlayEngine
+from .models import AugmentMetric, OverlayConfig
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -35,6 +36,10 @@ class ReplacePickRequest(BaseModel):
 
 class DemoStartRequest(BaseModel):
     auto_play: bool = True
+
+
+class UpdateMetricsRequest(BaseModel):
+    metrics: list[AugmentMetric] = Field(default_factory=list)
 
 
 class WsHub:
@@ -141,6 +146,13 @@ def create_app(engine: OverlayEngine) -> FastAPI:
         pick = engine.replace_pick(req.uid, req.augment_id)
         if pick is None:
             raise HTTPException(status_code=404, detail="Pick or augment not found")
+        return {"pick": pick.model_dump()}
+
+    @app.post("/api/picks/{uid}/metrics")
+    async def update_metrics(uid: str, req: UpdateMetricsRequest) -> dict[str, Any]:
+        pick = engine.update_pick_metrics(uid, req.metrics)
+        if pick is None:
+            raise HTTPException(status_code=404, detail="Pick not found")
         return {"pick": pick.model_dump()}
 
     @app.delete("/api/picks/{uid}")

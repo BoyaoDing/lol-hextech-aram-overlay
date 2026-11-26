@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from hextech_overlay.config import ConfigStore
 from hextech_overlay.engine import OverlayEngine
 from hextech_overlay.server import create_app
 
@@ -68,13 +70,42 @@ class TestServerApi(unittest.TestCase):
         self.client.post("/api/picks/undo")
         self.assertEqual(len(self.client.get("/api/state").json()["state"]["picks"]), 0)
 
-        # Config persistence
-        cfg_r = self.client.post("/api/config", json={"theme": "showcase", "scale": 1.25})
+        # Config defaults & display_mode <-> show_description sync + legacy migration
+        default_cfg = self.client.get("/api/config").json()
+        self.assertEqual(default_cfg["display_mode"], "name_only")
+        self.assertFalse(default_cfg["show_description"])
+        self.assertTrue(default_cfg["show_transform_flow"])
+        self.assertTrue(default_cfg["show_metrics"])
+
+        cfg_r = self.client.post("/api/config", json={"theme": "showcase", "scale": 1.25, "display_mode": "compact"})
         self.assertEqual(cfg_r.status_code, 200)
         self.assertEqual(cfg_r.json()["theme"], "showcase")
         self.assertEqual(cfg_r.json()["scale"], 1.25)
+        self.assertEqual(cfg_r.json()["display_mode"], "compact")
+        self.assertTrue(cfg_r.json()["show_description"])
 
-        # Demo step progression + WebSocket check
+        cfg_off = self.client.post("/api/config", json={"show_description": False, "show_transform_flow": False, "show_metrics": False})
+        self.assertEqual(cfg_off.json()["display_mode"], "name_only")
+        self.assertFalse(cfg_off.json()["show_transform_flow"])
+        self.assertFalse(cfg_off.json()["show_metrics"])
+
+        legacy_path = Path(self._tmp.name) / "legacy_cfg.json"
+        legacy_path.write_text(json.dumps({"show_description": True}), encoding="utf-8")
+        migrated = ConfigStore(legacy_path).get()
+        self.assertEqual(migrated.display_mode, "detailed")
+
+        # Manual metrics CRUD endpoint
+        pick_m = self.client.post("/api/picks/add", json={"augment_id": aug_id, "level": 3}).json()["pick"]
+        m_res = self.client.post(
+            f"/api/picks/{pick_m['uid']}/metrics",
+            json={"metrics": [{"label": "已造成伤害", "value": "3,210", "kind": "damage", "source": "manual"}]},
+        )
+        self.assertEqual(m_res.status_code, 200)
+        self.assertEqual(m_res.json()["pick"]["metrics"][0]["value"], "3,210")
+        self.assertEqual(self.client.post("/api/picks/baduid/metrics", json={"metrics": []}).status_code, 404)
+        self.client.post("/api/picks/clear")
+
+        # Demo step progression + chained Chaos->Pandora lineage + WebSocket check
         with self.client.websocket_connect("/ws") as ws:
             snap = ws.receive_json()
             self.assertEqual(snap["type"], "snapshot")
@@ -89,6 +120,11 @@ class TestServerApi(unittest.TestCase):
             self.assertTrue(finished)
             final_picks = self.client.get("/api/state").json()["state"]["picks"]
             self.assertEqual(len(final_picks), 5)
+            self.assertEqual(final_picks[0]["origin_group_id"], "demo_chaos_1")
+            self.assertEqual(final_picks[1]["origin_group_id"], "demo_chaos_1")
+            self.assertEqual(len(final_picks[0]["lineage"]), 2)
+            self.assertEqual(final_picks[0]["lineage"][1]["via_name"], "潘朵拉的盒子")
+            self.assertTrue(len(final_picks[0]["metrics"]) >= 1)
 
             self.client.post("/api/demo/reset")
             self.assertEqual(len(self.client.get("/api/state").json()["state"]["picks"]), 0)

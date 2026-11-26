@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from hextech_overlay.catalog import AugmentCatalog
+from hextech_overlay.models import PickedAugment
 from hextech_overlay.vision_detector import (
     FOUR_CARD_LAYOUT,
     THREE_CARD_LAYOUT,
@@ -17,7 +18,9 @@ from hextech_overlay.vision_detector import (
     classify_click_zone,
     detect_card_layout,
     get_card_geometry,
+    parse_tooltip_metrics,
     title_crop_boxes,
+    tooltip_crop_rect,
 )
 
 
@@ -144,6 +147,57 @@ class TestVisionStateMachine(unittest.TestCase):
         assert closed.picked is not None
         self.assertEqual(closed.picked.augment.id, a2.id)
         self.assertEqual(closed.picked.source, "vision_flare")
+
+    def test_tooltip_crop_and_ocr_metrics_parsing(self) -> None:
+        game = (100, 50, 1920, 1080)
+        # Bottom HUD cursor triggers valid clamped crop
+        crop_hud = tooltip_crop_rect(game, (960, 1040), tab_held=False)
+        self.assertIsNotNone(crop_hud)
+        assert crop_hud is not None
+        x0, y0, cw, ch = crop_hud
+        self.assertGreaterEqual(x0, 100)
+        self.assertGreaterEqual(y0, 50)
+        self.assertLessEqual(x0 + cw, 2020)
+        self.assertLessEqual(y0 + ch, 1130)
+
+        # Mid-screen without Tab does not capture tooltips
+        self.assertIsNone(tooltip_crop_rect(game, (960, 500), tab_held=False))
+        self.assertIsNotNone(tooltip_crop_rect(game, (960, 500), tab_held=True))
+
+        tank = self.catalog.get_by_key("ARAM_TankEngine")
+        conduit = self.catalog.get_by_key("ARAM_InfernalConduit")
+        assert tank and conduit
+        owned = [
+            PickedAugment(uid="u1", augment_id=tank.id, key=tank.key, name=tank.name, rarity=tank.rarity, picked_at=1.0),
+            PickedAugment(uid="u2", augment_id=conduit.id, key=conduit.key, name=conduit.name, rarity=conduit.rarity, picked_at=2.0),
+        ]
+
+        res_tank = parse_tooltip_metrics(
+            ["坦 克 引 擎", "已 叠 加 ： 14 层", "已 提 供 护 盾 ： 1,280"],
+            owned,
+            self.catalog,
+        )
+        assert res_tank is not None
+        uid, metrics = res_tank
+        self.assertEqual(uid, "u1")
+        by_kind = {m.kind: m for m in metrics}
+        self.assertEqual(by_kind["stack"].value, "14层")
+        self.assertEqual(by_kind["shield"].value, "1,280")
+
+        res_dmg = parse_tooltip_metrics(
+            ["炼 狱 导 管", "已 造 成 伤 害 ： 5,420", "已 减 少 冷 却 ： 32 秒"],
+            owned,
+            self.catalog,
+        )
+        assert res_dmg is not None
+        self.assertEqual(res_dmg[0], "u2")
+        self.assertEqual([(m.kind, m.label, m.value) for m in res_dmg[1]], [
+            ("damage", "已造成伤害", "5,420"),
+            ("stat", "减少冷却", "32秒"),
+        ])
+
+        # Non-owned item tooltip must be ignored
+        self.assertIsNone(parse_tooltip_metrics(["兰 顿 之 兆", "已 造 成 伤 害 ： 2,000"], owned, self.catalog))
 
 
 if __name__ == "__main__":

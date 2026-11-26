@@ -11,7 +11,9 @@ from pathlib import Path
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from hextech_overlay.config import SessionStore
 from hextech_overlay.engine import OverlayEngine
+from hextech_overlay.models import AugmentMetric
 from hextech_overlay.tencent_log import (
     StateAction,
     TencentAugmentStateMachine,
@@ -651,6 +653,99 @@ class TestTencentLog(unittest.TestCase):
             self.assertEqual([p.key for p in picks], ["ARAM_Eureka", "BrandNewHotfixAugment"])
             self.assertEqual([p.level for p in picks], [3, 3])
             self.assertEqual(picks[1].name, "BrandNewHotfixAugment")
+
+    def test_transmute_gold_chaos_and_pandora_chained_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            engine = OverlayEngine(base / "data", base / "cache", enable_background_monitors=False)
+            engine._state.champion_alias = "Ezreal"
+            engine._state.game_mode = "KIWI"
+            engine._state.game_time = 30.0
+            engine._state.level = 3
+
+            # Lv.3: Transmute Chaos splits into Tank Engine + Infernal Conduit sharing origin_group_id
+            engine._apply_tencent_action(StateAction(kind="picked", at=1.0, picked_index=0, picked_key="ARAM_TransmuteChaos"))
+            engine._apply_tencent_action(
+                StateAction(kind="reconcile_owned", at=1.5, keys=["ARAM_TankEngine", "ARAM_InfernalConduit"])
+            )
+            p0, p1 = engine._state.picks
+            self.assertIsNotNone(p0.origin_group_id)
+            self.assertEqual(p0.origin_group_id, p1.origin_group_id)
+            self.assertEqual(p0.origin_name, "质变：混沌")
+            self.assertEqual([s.via_key for s in p0.lineage], ["ARAM_TransmuteChaos"])
+            self.assertEqual([s.via_key for s in p1.lineage], ["ARAM_TransmuteChaos"])
+
+            # Lv.7: Transmute Gold -> Apex Inventor (keeps prior group picks intact)
+            engine._state.level = 7
+            engine._state.game_time = 240.0
+            engine._apply_tencent_action(StateAction(kind="picked", at=240.0, picked_index=0, picked_key="ARAM_TransmuteGold"))
+            engine._apply_tencent_action(
+                StateAction(
+                    kind="reconcile_owned",
+                    at=241.0,
+                    keys=["ARAM_TankEngine", "ARAM_InfernalConduit", "ARAM_ApexInventor"],
+                )
+            )
+            self.assertEqual(len(engine._state.picks), 3)
+            self.assertEqual(engine._state.picks[0].uid, p0.uid)
+            self.assertEqual(engine._state.picks[2].level, 7)
+            self.assertIsNone(engine._state.picks[2].origin_group_id)
+            self.assertEqual([s.via_key for s in engine._state.picks[2].lineage], ["ARAM_TransmuteGold"])
+
+            # Lv.11: Pandora's Box chains all 3 existing picks + adds its own slot
+            engine._state.level = 11
+            engine._state.game_time = 520.0
+            engine._apply_tencent_action(StateAction(kind="picked", at=520.0, picked_index=1, picked_key="ARAM_PandorasBox"))
+            engine._apply_tencent_action(
+                StateAction(
+                    kind="reconcile_owned",
+                    at=521.0,
+                    keys=["ARAM_JeweledGauntlet", "ARAM_Eureka", "ARAM_BladeWaltz", "ARAM_ClownCollege"],
+                )
+            )
+            final = engine._state.picks
+            self.assertEqual(len(final), 4)
+            self.assertEqual(final[0].origin_group_id, p0.origin_group_id)
+            self.assertEqual(final[1].origin_group_id, p0.origin_group_id)
+            self.assertEqual(
+                [(s.from_key, s.via_key) for s in final[0].lineage],
+                [("", "ARAM_TransmuteChaos"), ("ARAM_TankEngine", "ARAM_PandorasBox")],
+            )
+            self.assertEqual(
+                [(s.from_key, s.via_key) for s in final[2].lineage],
+                [("", "ARAM_TransmuteGold"), ("ARAM_ApexInventor", "ARAM_PandorasBox")],
+            )
+            self.assertEqual([(s.from_key, s.via_key) for s in final[3].lineage], [("", "ARAM_PandorasBox")])
+
+            # Update metric and verify SessionStore round-trip restores lineage, group, and metrics
+            updated = engine.update_pick_metrics(
+                final[0].uid,
+                [AugmentMetric(label="已造成伤害", value="6,120", kind="damage", source="manual")],
+            )
+            self.assertIsNotNone(updated)
+            restored = SessionStore(base / "data" / "session_state.json").try_restore(
+                champion_alias="Ezreal",
+                game_mode="KIWI",
+                game_time=530.0,
+            )
+            assert restored is not None
+            r_picks, _ = restored
+            self.assertEqual(r_picks[0].origin_group_id, p0.origin_group_id)
+            self.assertEqual(len(r_picks[0].lineage), 2)
+            self.assertEqual(r_picks[0].metrics[0].value, "6,120")
+
+    def test_kingme_bonus_prismatic_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            engine = OverlayEngine(base / "data", base / "cache", enable_background_monitors=False)
+            engine._state.level = 7
+            engine._apply_tencent_action(StateAction(kind="picked", at=10.0, picked_index=0, picked_key="KingMe"))
+            self.assertEqual([p.key for p in engine._state.picks], ["KingMe"])
+
+            engine._state.level = 10
+            engine._apply_tencent_action(StateAction(kind="reconcile_owned", at=120.0, keys=["KingMe", "ARAM_Eureka"]))
+            self.assertEqual([p.key for p in engine._state.picks], ["KingMe", "ARAM_Eureka"])
+            self.assertEqual([s.via_key for s in engine._state.picks[1].lineage], ["KingMe"])
 
 
 if __name__ == "__main__":

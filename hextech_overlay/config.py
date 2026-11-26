@@ -23,6 +23,8 @@ class ConfigStore:
         if self.path.exists():
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and "display_mode" not in raw and "show_description" in raw:
+                    raw["display_mode"] = "detailed" if raw.get("show_description") else "name_only"
                 return OverlayConfig.model_validate(raw)
             except Exception:
                 pass
@@ -43,7 +45,15 @@ class ConfigStore:
     def update(self, patch: dict[str, Any]) -> OverlayConfig:
         with self._lock:
             merged = self._config.model_dump()
-            merged.update({k: v for k, v in patch.items() if v is not None})
+            cleaned = {k: v for k, v in patch.items() if v is not None}
+            merged.update(cleaned)
+            if "display_mode" in cleaned and "show_description" not in cleaned:
+                merged["show_description"] = cleaned["display_mode"] != "name_only"
+            elif "show_description" in cleaned and "display_mode" not in cleaned:
+                if not cleaned["show_description"]:
+                    merged["display_mode"] = "name_only"
+                elif merged.get("display_mode") == "name_only":
+                    merged["display_mode"] = "detailed"
             cfg = OverlayConfig.model_validate(merged)
             self._save_unlocked(cfg)
             self._config = cfg

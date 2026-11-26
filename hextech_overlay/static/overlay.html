@@ -107,39 +107,54 @@
     gap: 8px;
   }
 
-  /* Theme: vertical & showcase */
+  /* Theme: vertical & showcase width scales cleanly with display mode */
   #stage[data-theme="vertical"] #list,
   #stage[data-theme="showcase"] #list {
     flex-direction: column;
-    width: 320px;
+    width: 344px;
+  }
+
+  #stage[data-theme="vertical"][data-mode="compact"] #list,
+  #stage[data-theme="showcase"][data-mode="compact"] #list {
+    width: 368px;
+  }
+
+  #stage[data-theme="vertical"][data-mode="detailed"] #list,
+  #stage[data-theme="showcase"][data-mode="detailed"] #list {
+    width: 404px;
   }
 
   #stage[data-theme="tray"] #list {
     flex-direction: row;
     flex-wrap: wrap;
-    max-width: 960px;
+    align-items: flex-start;
+    max-width: 1020px;
   }
 
   #stage[data-theme="strip"] #list {
     flex-direction: row;
     flex-wrap: wrap;
     gap: 6px;
-    max-width: 980px;
+    max-width: 1040px;
   }
 
   .card {
     position: relative;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
     background: var(--bg-card);
-    border-radius: 8px;
-    padding: 8px 12px 8px 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 9px;
+    padding: 9px 13px 9px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
     border-left: 4px solid var(--unknown);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(6px);
     animation: slideIn 0.35s cubic-bezier(0.2, 0.85, 0.3, 1) both;
+  }
+
+  #stage[data-mode="name_only"] .card {
+    padding: 10px 14px 10px 12px;
   }
 
   .card.silver {
@@ -163,13 +178,18 @@
 
   .icon-box {
     flex: none;
-    width: 40px;
-    height: 40px;
-    border-radius: 7px;
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
     display: grid;
     place-items: center;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.10);
+  }
+
+  #stage[data-mode="name_only"] .icon-box {
+    width: 46px;
+    height: 46px;
   }
 
   .card.silver .icon-box {
@@ -188,11 +208,16 @@
   }
 
   .icon-glyph {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     background: var(--unknown);
     -webkit-mask: var(--icon) center / contain no-repeat;
     mask: var(--icon) center / contain no-repeat;
+  }
+
+  #stage[data-mode="name_only"] .icon-glyph {
+    width: 36px;
+    height: 36px;
   }
 
   .card.silver .icon-glyph {
@@ -214,7 +239,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
   }
 
   .title-row {
@@ -225,13 +250,21 @@
   }
 
   .name {
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.24;
     color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    text-shadow: 0 2px 5px rgba(0, 0, 0, 0.88);
+  }
+
+  #stage[data-mode="name_only"] .name {
+    font-size: 20px;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    text-shadow: 0 2px 7px rgba(0, 0, 0, 0.94);
   }
 
   .badges {
@@ -243,11 +276,11 @@
 
   .badge {
     font-size: 11px;
-    font-weight: 600;
-    padding: 1px 6px;
+    font-weight: 700;
+    padding: 2px 6px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.08);
-    color: #d4deec;
+    background: rgba(255, 255, 255, 0.09);
+    color: #dbe5f2;
   }
 
   .card.silver .badge.rarity { color: var(--silver-tag); }
@@ -258,62 +291,335 @@
   }
 
   .desc {
-    font-size: 12px;
-    line-height: 1.38;
-    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.44;
+    color: #d0dced;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 6;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
+  #stage[data-mode="name_only"] .desc {
+    display: none;
+  }
+
+  #stage[data-mode="compact"] .desc {
+    font-size: 12.5px;
+    line-height: 1.38;
+    color: var(--muted);
+    -webkit-line-clamp: 1;
+  }
+
+  #stage[data-mode="detailed"] .desc {
+    font-size: 13.5px;
+    line-height: 1.48;
+    -webkit-line-clamp: 6;
+  }
+
+  /* Compact transform flow chain (Style 1) */
+  .flow-chain {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 3px;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #b7c8de;
+  }
+
+  #stage[data-mode="name_only"] .flow-chain {
+    font-size: 12px;
+  }
+
+  .flow-origin {
+    color: #f3d58c;
+    font-weight: 700;
+  }
+
+  .flow-from {
+    color: #dbe5f4;
+  }
+
+  .flow-via {
+    color: #e9c9fb;
+    font-weight: 700;
+  }
+
+  .flow-arrow {
+    color: #7d93b2;
+    margin: 0 1px;
+  }
+
+  /* Chaos 1-to-2+ branch tree container */
+  .flow-group {
+    width: 100%;
+    border-radius: 10px;
+    background: rgba(8, 13, 23, 0.78);
+    border: 1px solid rgba(201, 154, 245, 0.34);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.52);
+    padding: 8px 9px 9px;
+    backdrop-filter: blur(6px);
+    animation: slideIn 0.35s cubic-bezier(0.2, 0.85, 0.3, 1) both;
+  }
+
+  .flow-group.gold {
+    border-color: rgba(227, 205, 167, 0.42);
+  }
+
+  .flow-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 1px 4px 6px;
+    font-size: 12.5px;
+    font-weight: 800;
+    color: #f4dc9e;
+  }
+
+  .flow-group-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .flow-group-sub {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(201, 154, 245, 0.16);
+    color: #f3dcff;
+  }
+
+  .flow-branches {
+    position: relative;
+    padding-left: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .flow-branch {
+    position: relative;
+  }
+
+  .flow-branch::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: -4px;
+    bottom: -4px;
+    width: 2px;
+    background: rgba(201, 154, 245, 0.45);
+  }
+
+  .flow-branch:first-child::before {
+    top: 4px;
+  }
+
+  .flow-branch:last-child::before {
+    bottom: 50%;
+  }
+
+  .flow-branch::after {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: 50%;
+    width: 10px;
+    height: 2px;
+    background: rgba(201, 154, 245, 0.45);
+  }
+
+  .flow-branch .card {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.36);
+  }
+
+  /* Stack / damage / heal metric pills */
+  .metrics-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 2px;
+  }
+
+  .metric-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.25;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.34);
+    color: #d6f1ff;
+  }
+
+  #stage[data-mode="name_only"] .metric-pill {
+    font-size: 12.5px;
+    padding: 2px 8px;
+  }
+
+  .metric-pill .m-lbl {
+    opacity: 0.85;
+    font-weight: 600;
+  }
+
+  .metric-pill.kind-stack {
+    background: rgba(251, 191, 36, 0.15);
+    border-color: rgba(251, 191, 36, 0.42);
+    color: #fde68a;
+  }
+
+  .metric-pill.kind-damage {
+    background: rgba(248, 113, 113, 0.16);
+    border-color: rgba(248, 113, 113, 0.44);
+    color: #fecaca;
+  }
+
+  .metric-pill.kind-heal {
+    background: rgba(52, 211, 153, 0.15);
+    border-color: rgba(52, 211, 153, 0.40);
+    color: #bbf7d0;
+  }
+
+  .metric-pill.kind-shield {
+    background: rgba(96, 165, 250, 0.16);
+    border-color: rgba(96, 165, 250, 0.42);
+    color: #dbeafe;
+  }
+
+  .metric-pill.kind-gold {
+    background: rgba(234, 179, 8, 0.18);
+    border-color: rgba(234, 179, 8, 0.46);
+    color: #fef08a;
+  }
+
   /* Tray theme refinements */
+  #stage[data-theme="tray"] .flow-group {
+    width: auto;
+    min-width: 265px;
+    max-width: 340px;
+  }
+
   #stage[data-theme="tray"] .card {
-    width: 220px;
-    padding: 7px 10px;
+    width: 256px;
+    padding: 8px 11px;
+  }
+
+  #stage[data-theme="tray"] .flow-branch .card {
+    width: 100%;
   }
 
   #stage[data-theme="tray"] .icon-box {
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
   }
 
   #stage[data-theme="tray"] .icon-glyph {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
+  }
+
+  #stage[data-theme="tray"] .name {
+    font-size: 15.5px;
+  }
+
+  #stage[data-theme="tray"][data-mode="name_only"] .name {
+    font-size: 16.5px;
   }
 
   #stage[data-theme="tray"] .desc {
     -webkit-line-clamp: 1;
-    font-size: 11px;
+    font-size: 11.5px;
   }
 
   /* Strip theme refinements */
+  #stage[data-theme="strip"] .flow-group {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    padding: 4px 6px;
+    border-radius: 999px;
+  }
+
+  #stage[data-theme="strip"] .flow-group-head {
+    padding: 0 4px 0 6px;
+    font-size: 11.5px;
+  }
+
+  #stage[data-theme="strip"] .flow-group-sub {
+    display: none;
+  }
+
+  #stage[data-theme="strip"] .flow-branches {
+    padding-left: 0;
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  #stage[data-theme="strip"] .flow-branch::before,
+  #stage[data-theme="strip"] .flow-branch::after {
+    display: none;
+  }
+
   #stage[data-theme="strip"] .card {
-    padding: 5px 10px 5px 7px;
+    padding: 6px 11px 6px 8px;
     border-radius: 999px;
     border-left-width: 3px;
     gap: 7px;
   }
 
+  #stage[data-theme="strip"] .meta {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+
   #stage[data-theme="strip"] .icon-box {
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
   }
 
   #stage[data-theme="strip"] .icon-glyph {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
   }
 
   #stage[data-theme="strip"] .name {
-    font-size: 13px;
+    font-size: 14px;
+  }
+
+  #stage[data-theme="strip"][data-mode="name_only"] .name {
+    font-size: 15px;
   }
 
   #stage[data-theme="strip"] .desc,
   #stage[data-theme="strip"] .badge.rarity {
     display: none;
+  }
+
+  #stage[data-theme="strip"] .flow-chain {
+    font-size: 11px;
+    margin-right: 2px;
+  }
+
+  #stage[data-theme="strip"] .metrics-row {
+    margin-top: 0;
+  }
+
+  #stage[data-theme="strip"] .metric-pill {
+    font-size: 11px;
+    padding: 1px 6px;
   }
 
   /* Showcase Toast for newly acquired augments */
@@ -390,26 +696,33 @@
     unknown: "强化"
   };
 
-  const params = new URLSearchParams(location.search);
-  const queryOverrides = {
-    theme: params.get("theme"),
-    align: params.get("align"),
-    desc: params.has("desc") ? params.get("desc") !== "0" : null,
-    level: params.has("level") ? params.get("level") !== "0" : null,
-    header: params.has("header") ? params.get("header") !== "0" : null,
-    scale: params.has("scale") ? Number(params.get("scale")) : null,
-    max: params.has("max") ? Number(params.get("max")) : null
-  };
-
   const stageEl = document.getElementById("stage");
   const headerEl = document.getElementById("header");
   const headerTextEl = document.getElementById("header-text");
   const listEl = document.getElementById("list");
   const toastEl = document.getElementById("toast");
+  const toastKickerEl = toastEl.querySelector(".toast-kicker");
   const toastNameEl = document.getElementById("toast-name");
   const toastDescEl = document.getElementById("toast-desc");
   const toastRarityEl = document.getElementById("toast-rarity");
   const toastIconEl = document.getElementById("toast-icon");
+
+  const params = new URLSearchParams(location.search);
+  const validModes = new Set(["name_only", "compact", "detailed"]);
+  const rawMode = params.get("mode");
+  const modeOverride = validModes.has(rawMode) ? rawMode : (params.has("desc") ? (params.get("desc") !== "0" ? "detailed" : "name_only") : null);
+
+  const queryOverrides = {
+    theme: params.get("theme"),
+    align: params.get("align"),
+    mode: modeOverride,
+    flow: params.has("flow") ? params.get("flow") !== "0" : null,
+    metrics: params.has("metrics") ? params.get("metrics") !== "0" : null,
+    level: params.has("level") ? params.get("level") !== "0" : null,
+    header: params.has("header") ? params.get("header") !== "0" : null,
+    scale: params.has("scale") ? Number(params.get("scale")) : null,
+    max: params.has("max") ? Number(params.get("max")) : null
+  };
 
   let seenPickUids = new Set();
   let initializedPicks = false;
@@ -420,10 +733,58 @@
     return "/api/icon/" + path.replace(/^\/+/, "");
   }
 
-  function showToast(pick) {
+  function appendSpan(parent, cls, text) {
+    const sp = document.createElement("span");
+    if (cls) sp.className = cls;
+    sp.textContent = text;
+    parent.appendChild(sp);
+    return sp;
+  }
+
+  function buildFlowChainEl(lineage, skipRootName = "") {
+    if (!Array.isArray(lineage) || lineage.length === 0) return null;
+    let steps = lineage;
+    if (skipRootName && !steps[0].from_name && steps[0].via_name === skipRootName) {
+      steps = steps.slice(1);
+    }
+    if (steps.length === 0) return null;
+
+    const el = document.createElement("div");
+    el.className = "flow-chain";
+    steps.forEach((st, idx) => {
+      if (st.from_name) {
+        appendSpan(el, "flow-from", st.from_name);
+        appendSpan(el, "flow-arrow", "─(");
+        appendSpan(el, "flow-via", st.via_name);
+        appendSpan(el, "flow-arrow", ")→");
+      } else {
+        if (idx === 0) {
+          appendSpan(el, "flow-origin", `✦ ${st.via_name}`);
+        } else {
+          appendSpan(el, "flow-origin", st.via_name);
+        }
+        appendSpan(el, "flow-arrow", "→");
+      }
+    });
+    return el;
+  }
+
+  function showToast(pick, displayMode, showFlow, showMetrics) {
+    if (showFlow && Array.isArray(pick.lineage) && pick.lineage.length > 0) {
+      const origin = pick.origin_name || pick.lineage[pick.lineage.length - 1].via_name;
+      toastKickerEl.textContent = `刚刚获得海克斯强化 · 来自 ${origin}`;
+    } else {
+      toastKickerEl.textContent = "刚刚获得海克斯强化";
+    }
     toastNameEl.textContent = pick.name;
     toastRarityEl.textContent = RARITY_LABEL[pick.rarity] || "强化";
-    toastDescEl.textContent = pick.description || "已装备该海克斯强化";
+    if (displayMode !== "name_only" && pick.description) {
+      toastDescEl.textContent = pick.description;
+    } else if (showMetrics && Array.isArray(pick.metrics) && pick.metrics.length > 0) {
+      toastDescEl.textContent = pick.metrics.map(m => `${m.label}: ${m.value}`).join(" · ");
+    } else {
+      toastDescEl.textContent = "已装备该海克斯强化";
+    }
     toastIconEl.style.setProperty("--icon", `url("${iconUrl(pick.icon_path)}")`);
     toastIconEl.style.background =
       pick.rarity === "prismatic"
@@ -436,10 +797,85 @@
     toastTimer = setTimeout(() => toastEl.classList.remove("visible"), 5200);
   }
 
+  function createPickCard(pick, opts) {
+    const { theme, displayMode, showFlow, showMetrics, showLevel, skipGroupRoot } = opts;
+    const card = document.createElement("div");
+    card.className = `card ${pick.rarity || "unknown"}`;
+
+    const iconBox = document.createElement("div");
+    iconBox.className = "icon-box";
+    const glyph = document.createElement("div");
+    glyph.className = "icon-glyph";
+    glyph.style.setProperty("--icon", `url("${iconUrl(pick.icon_path)}")`);
+    iconBox.appendChild(glyph);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+
+    if (showFlow) {
+      const chainEl = buildFlowChainEl(pick.lineage, skipGroupRoot);
+      if (chainEl) {
+        meta.appendChild(chainEl);
+      }
+    }
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "title-row";
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "name";
+    nameEl.textContent = pick.name;
+
+    const badges = document.createElement("div");
+    badges.className = "badges";
+    const rarityBadge = document.createElement("span");
+    rarityBadge.className = "badge rarity";
+    rarityBadge.textContent = RARITY_LABEL[pick.rarity] || "强化";
+    badges.appendChild(rarityBadge);
+
+    if (showLevel && pick.level && !skipGroupRoot) {
+      const lvlBadge = document.createElement("span");
+      lvlBadge.className = "badge";
+      lvlBadge.textContent = `Lv.${pick.level}`;
+      badges.appendChild(lvlBadge);
+    }
+
+    titleRow.appendChild(nameEl);
+    titleRow.appendChild(badges);
+    meta.appendChild(titleRow);
+
+    if (showMetrics && Array.isArray(pick.metrics) && pick.metrics.length > 0) {
+      const mRow = document.createElement("div");
+      mRow.className = "metrics-row";
+      for (const m of pick.metrics) {
+        const pill = document.createElement("span");
+        pill.className = `metric-pill kind-${m.kind || "stat"}`;
+        appendSpan(pill, "m-lbl", m.label);
+        appendSpan(pill, "m-val", m.value);
+        mRow.appendChild(pill);
+      }
+      meta.appendChild(mRow);
+    }
+
+    if (displayMode !== "name_only" && pick.description && theme !== "strip") {
+      const descEl = document.createElement("div");
+      descEl.className = "desc";
+      descEl.textContent = pick.description;
+      meta.appendChild(descEl);
+    }
+
+    card.appendChild(iconBox);
+    card.appendChild(meta);
+    return card;
+  }
+
   function render(state, config) {
     const theme = queryOverrides.theme || config.theme || "vertical";
     const align = queryOverrides.align || config.align || "left";
-    const showDesc = queryOverrides.desc ?? config.show_description;
+    const fallbackMode = config.show_description ? "detailed" : "name_only";
+    const displayMode = queryOverrides.mode || config.display_mode || fallbackMode;
+    const showFlow = queryOverrides.flow ?? (config.show_transform_flow !== false);
+    const showMetrics = queryOverrides.metrics ?? (config.show_metrics !== false);
     const showLevel = queryOverrides.level ?? config.show_level_badge;
     const showHeader = queryOverrides.header ?? config.show_champion_header;
     const scale = Number.isFinite(queryOverrides.scale) && queryOverrides.scale > 0
@@ -451,6 +887,7 @@
 
     stageEl.dataset.theme = theme;
     stageEl.dataset.align = align;
+    stageEl.dataset.mode = displayMode;
     stageEl.style.transform = `scale(${scale})`;
 
     const picks = (state.picks || []).slice(-maxVisible);
@@ -467,55 +904,72 @@
     }
 
     listEl.innerHTML = "";
+    const groupCounts = {};
+    if (showFlow) {
+      for (const p of picks) {
+        if (p.origin_group_id) {
+          groupCounts[p.origin_group_id] = (groupCounts[p.origin_group_id] || 0) + 1;
+        }
+      }
+    }
+
+    const renderedGroupIds = new Set();
+    const cardOpts = { theme, displayMode, showFlow, showMetrics, showLevel, skipGroupRoot: "" };
+
     for (const pick of picks) {
-      const card = document.createElement("div");
-      card.className = `card ${pick.rarity || "unknown"}`;
+      const gid = showFlow ? pick.origin_group_id : null;
+      if (gid && groupCounts[gid] >= 2) {
+        if (renderedGroupIds.has(gid)) continue;
+        renderedGroupIds.add(gid);
 
-      const iconBox = document.createElement("div");
-      iconBox.className = "icon-box";
-      const glyph = document.createElement("div");
-      glyph.className = "icon-glyph";
-      glyph.style.setProperty("--icon", `url("${iconUrl(pick.icon_path)}")`);
-      iconBox.appendChild(glyph);
+        const groupPicks = picks.filter(x => x.origin_group_id === gid);
+        const first = groupPicks[0];
+        const originName = first.origin_name || (first.lineage?.[0]?.via_name) || "质变：混沌";
+        const originRarity = first.origin_rarity && first.origin_rarity !== "unknown" ? first.origin_rarity : "prismatic";
 
-      const meta = document.createElement("div");
-      meta.className = "meta";
+        const groupBox = document.createElement("div");
+        groupBox.className = `flow-group ${originRarity}`;
 
-      const titleRow = document.createElement("div");
-      titleRow.className = "title-row";
+        const head = document.createElement("div");
+        head.className = "flow-group-head";
 
-      const nameEl = document.createElement("div");
-      nameEl.className = "name";
-      nameEl.textContent = pick.name;
+        const titleWrap = document.createElement("div");
+        titleWrap.className = "flow-group-title";
+        appendSpan(titleWrap, "", `✦ ${originName}`);
+        appendSpan(titleWrap, "flow-group-sub", groupPicks.length === 2 ? "一变二" : `${groupPicks.length} 分支`);
+        head.appendChild(titleWrap);
 
-      const badges = document.createElement("div");
-      badges.className = "badges";
-      const rarityBadge = document.createElement("span");
-      rarityBadge.className = "badge rarity";
-      rarityBadge.textContent = RARITY_LABEL[pick.rarity] || "强化";
-      badges.appendChild(rarityBadge);
+        const headBadges = document.createElement("div");
+        headBadges.className = "badges";
+        const rar = document.createElement("span");
+        rar.className = "badge";
+        rar.textContent = RARITY_LABEL[originRarity] || "棱彩";
+        headBadges.appendChild(rar);
+        if (showLevel && first.level) {
+          const lv = document.createElement("span");
+          lv.className = "badge";
+          lv.textContent = `Lv.${first.level}`;
+          headBadges.appendChild(lv);
+        }
+        head.appendChild(headBadges);
+        groupBox.appendChild(head);
 
-      if (showLevel && pick.level) {
-        const lvlBadge = document.createElement("span");
-        lvlBadge.className = "badge";
-        lvlBadge.textContent = `Lv.${pick.level}`;
-        badges.appendChild(lvlBadge);
+        const branches = document.createElement("div");
+        branches.className = "flow-branches";
+        for (const child of groupPicks) {
+          const branchRow = document.createElement("div");
+          branchRow.className = "flow-branch";
+          branchRow.appendChild(
+            createPickCard(child, { ...cardOpts, skipGroupRoot: originName })
+          );
+          branches.appendChild(branchRow);
+        }
+        groupBox.appendChild(branches);
+        listEl.appendChild(groupBox);
+        continue;
       }
 
-      titleRow.appendChild(nameEl);
-      titleRow.appendChild(badges);
-      meta.appendChild(titleRow);
-
-      if (showDesc && pick.description && theme !== "strip") {
-        const descEl = document.createElement("div");
-        descEl.className = "desc";
-        descEl.textContent = pick.description;
-        meta.appendChild(descEl);
-      }
-
-      card.appendChild(iconBox);
-      card.appendChild(meta);
-      listEl.appendChild(card);
+      listEl.appendChild(createPickCard(pick, cardOpts));
     }
 
     // Trigger spotlight toast when a brand-new pick arrives in showcase mode
@@ -527,7 +981,7 @@
       const newest = allPicks.filter(p => !seenPickUids.has(p.uid));
       allPicks.forEach(p => seenPickUids.add(p.uid));
       if (newest.length > 0 && theme === "showcase") {
-        showToast(newest[newest.length - 1]);
+        showToast(newest[newest.length - 1], displayMode, showFlow, showMetrics);
       }
       if (allPicks.length === 0) {
         seenPickUids.clear();

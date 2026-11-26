@@ -90,6 +90,7 @@
     cursor: pointer;
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: #182942;
+    color: var(--text);
     padding: 7px 12px;
     border-radius: 8px;
     font-size: 13px;
@@ -188,8 +189,8 @@
 
   .pick-row {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 8px;
     padding: 9px 11px;
     border-radius: 9px;
     background: var(--panel-2);
@@ -199,17 +200,72 @@
   .pick-row.gold { border-left-color: #e3cda7; }
   .pick-row.prismatic { border-left-color: #c99af5; }
 
+  .pick-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
   .pick-row img {
     width: 34px;
     height: 34px;
     border-radius: 6px;
     background: rgba(0,0,0,0.35);
     object-fit: contain;
+    flex: none;
   }
 
   .pick-info { flex: 1; min-width: 0; }
   .pick-name { font-size: 14px; font-weight: 600; }
   .pick-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .pick-flow { font-size: 11.5px; color: #e9c9fb; margin-bottom: 2px; font-weight: 600; }
+  .pick-metrics { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .metric-badge {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 5px;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.34);
+    color: #d6f1ff;
+  }
+  .metric-badge.stack { background: rgba(251, 191, 36, 0.14); border-color: rgba(251, 191, 36, 0.4); color: #fde68a; }
+  .metric-badge.damage { background: rgba(248, 113, 113, 0.15); border-color: rgba(248, 113, 113, 0.42); color: #fecaca; }
+  .metric-badge.heal { background: rgba(52, 211, 153, 0.14); border-color: rgba(52, 211, 153, 0.38); color: #bbf7d0; }
+  .metric-badge.shield { background: rgba(96, 165, 250, 0.15); border-color: rgba(96, 165, 250, 0.4); color: #dbeafe; }
+  .metric-badge.gold { background: rgba(234, 179, 8, 0.16); border-color: rgba(234, 179, 8, 0.42); color: #fef08a; }
+
+  .metric-editor {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(7, 14, 24, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .metric-edit-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .metric-edit-row select, .metric-edit-row input {
+    background: #0a1322;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+
+  .obs-hint {
+    width: 100%;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
 
   .search-bar {
     display: flex;
@@ -257,7 +313,7 @@
     border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     overflow: hidden;
-    height: 410px;
+    height: 475px;
     position: relative;
     background: linear-gradient(135deg, #132136 0%, #0a101b 100%);
   }
@@ -364,6 +420,7 @@
       <span class="obs-url" id="obs-url">http://127.0.0.1:18777/overlay</span>
       <button class="btn sm primary" id="copy-obs">复制地址</button>
       <a class="btn sm" href="/overlay" target="_blank" style="text-decoration:none">新标签打开</a>
+      <div class="obs-hint">单源独立参数示例：<code>?mode=name_only|compact|detailed&amp;flow=1|0&amp;metrics=1|0</code></div>
     </div>
   </div>
 
@@ -463,6 +520,14 @@
             </select>
           </div>
           <div class="field">
+            <label>信息详略模式</label>
+            <select id="cfg-display-mode">
+              <option value="name_only">仅显示名称（大字清晰 · 推荐）</option>
+              <option value="compact">名称 + 单行简介（均衡）</option>
+              <option value="detailed">名称 + 详细功能描述（完整）</option>
+            </select>
+          </div>
+          <div class="field">
             <label>对齐方向</label>
             <select id="cfg-align">
               <option value="left">左对齐</option>
@@ -471,20 +536,22 @@
             </select>
           </div>
           <div class="field">
-            <label>画面缩放 (<span id="scale-val">1.0</span>x)</label>
-            <input type="range" id="cfg-scale" min="0.6" max="1.6" step="0.05" value="1.0">
-          </div>
-          <div class="field">
             <label>最大展示个数</label>
             <input type="number" id="cfg-max" min="1" max="12" value="6">
           </div>
+          <div class="field" style="grid-column: span 2;">
+            <label>画面缩放 (<span id="scale-val">1.0</span>x)</label>
+            <input type="range" id="cfg-scale" min="0.6" max="1.6" step="0.05" value="1.0">
+          </div>
         </div>
         <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
-          <label class="check-row"><input type="checkbox" id="cfg-desc"> 显示海克斯效果简介</label>
+          <label class="check-row"><input type="checkbox" id="cfg-flow"> 显示质变流程（含混沌分支/潘朵拉链）</label>
+          <label class="check-row"><input type="checkbox" id="cfg-metrics"> 显示叠层与伤害统计</label>
           <label class="check-row"><input type="checkbox" id="cfg-level"> 显示获取等级标签</label>
           <label class="check-row"><input type="checkbox" id="cfg-header"> 显示英雄头部提示栏</label>
           <label class="check-row"><input type="checkbox" id="cfg-tencent"> 启用国服腾讯精准日志</label>
           <label class="check-row"><input type="checkbox" id="cfg-vision"> 启用视觉 OCR 回退</label>
+          <label class="check-row"><input type="checkbox" id="cfg-tooltip-ocr"> 悬停抓拍游戏内叠层/伤害（实验性）</label>
           <label class="check-row"><input type="checkbox" id="cfg-nonkiwi"> 允许非海斗模式调试</label>
         </div>
       </div>
@@ -499,12 +566,26 @@
     tencent_reconcile: "腾讯全量校准",
     vision_click: "视觉点击识别",
     vision_flare: "视觉闪光识别",
+    tooltip_ocr: "悬停抓拍",
+    metrics: "数值统计",
     manual: "主播手动",
     demo: "模拟演示"
   };
 
   const RARITY_LABEL = { silver: "白银", gold: "黄金", prismatic: "棱彩", unknown: "未知" };
+  const METRIC_KIND_PRESETS = [
+    { kind: "stack", label: "叠层", text: "叠层 (如: 12层)" },
+    { kind: "damage", label: "已造成伤害", text: "伤害统计 (如: 4,820)" },
+    { kind: "heal", label: "已治疗", text: "治疗量 (如: 1,250)" },
+    { kind: "shield", label: "已提供护盾", text: "护盾值 (如: 980)" },
+    { kind: "gold", label: "已获金币", text: "金币 (如: 650)" },
+    { kind: "stat", label: "属性", text: "其他属性/冷却" }
+  ];
+
   let replaceTargetUid = null;
+  let openMetricEditorUid = null;
+  let metricDrafts = {};
+  let latestState = null;
   let lastConfig = null;
 
   const $ = id => document.getElementById(id);
@@ -531,6 +612,19 @@
     return res.json();
   }
 
+  function formatLineageText(lineage) {
+    if (!Array.isArray(lineage) || lineage.length === 0) return "";
+    let out = "";
+    lineage.forEach((st, idx) => {
+      if (st.from_name) {
+        out += `${st.from_name} ─(${st.via_name})→ `;
+      } else {
+        out += (idx === 0 ? `✦ ${st.via_name}` : st.via_name) + " → ";
+      }
+    });
+    return out.trim();
+  }
+
   function setStatus(pillId, detId, ch, fallbackText) {
     const pill = $(pillId);
     const det = $(detId);
@@ -540,7 +634,204 @@
     det.textContent = ch?.detail || fallbackText;
   }
 
+  function renderPicksList(picks) {
+    const listEl = $("picks-list");
+    if (openMetricEditorUid && listEl.contains(document.activeElement)) {
+      return;
+    }
+
+    if (!picks.length) {
+      openMetricEditorUid = null;
+      listEl.innerHTML = "";
+      const empty = document.createElement("div");
+      empty.className = "empty-hint";
+      empty.textContent = "暂无已选海克斯。进入海克斯大乱斗选卡后将自动出现，也可在下方搜索补录或右侧点击「一键演示」。";
+      listEl.appendChild(empty);
+      return;
+    }
+
+    listEl.innerHTML = "";
+    for (const p of picks) {
+      const row = document.createElement("div");
+      row.className = `pick-row ${p.rarity || "silver"}`;
+
+      const main = document.createElement("div");
+      main.className = "pick-main";
+
+      const img = document.createElement("img");
+      img.src = p.icon_path ? `/api/icon/${p.icon_path.replace(/^\/+/, "")}` : "/api/icon/fallback";
+      img.alt = "";
+
+      const info = document.createElement("div");
+      info.className = "pick-info";
+
+      const flowText = formatLineageText(p.lineage);
+      if (flowText) {
+        const flowEl = document.createElement("div");
+        flowEl.className = "pick-flow";
+        flowEl.textContent = `质变流程：${flowText}${p.name}`;
+        info.appendChild(flowEl);
+      }
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "pick-name";
+      nameEl.textContent = `${p.name} `;
+      const tag = document.createElement("span");
+      tag.style.cssText = "font-size:12px;color:var(--gold);font-weight:400;";
+      tag.textContent = `[${RARITY_LABEL[p.rarity] || "强化"}${p.level ? ` · Lv.${p.level}` : ""}]`;
+      nameEl.appendChild(tag);
+      info.appendChild(nameEl);
+
+      if (Array.isArray(p.metrics) && p.metrics.length > 0) {
+        const mWrap = document.createElement("div");
+        mWrap.className = "pick-metrics";
+        for (const m of p.metrics) {
+          const b = document.createElement("span");
+          b.className = `metric-badge ${m.kind || "stat"}`;
+          b.textContent = `${m.label}: ${m.value}`;
+          mWrap.appendChild(b);
+        }
+        info.appendChild(mWrap);
+      }
+
+      const subEl = document.createElement("div");
+      subEl.className = "pick-sub";
+      subEl.textContent = `${SOURCE_LABEL[p.source] || p.source}${p.description ? " · " + p.description : ""}`;
+      info.appendChild(subEl);
+
+      const metricBtn = document.createElement("button");
+      metricBtn.className = "btn sm";
+      metricBtn.textContent = openMetricEditorUid === p.uid ? "收起数值" : "数值";
+      metricBtn.onclick = () => {
+        if (openMetricEditorUid === p.uid) {
+          openMetricEditorUid = null;
+        } else {
+          openMetricEditorUid = p.uid;
+          metricDrafts[p.uid] = (p.metrics || []).map(m => ({ kind: m.kind || "stat", label: m.label, value: m.value }));
+          if (metricDrafts[p.uid].length === 0) {
+            metricDrafts[p.uid].push({ kind: "stack", label: "叠层", value: "" });
+          }
+        }
+        renderPicksList(latestState?.picks || picks);
+      };
+
+      const repBtn = document.createElement("button");
+      repBtn.className = "btn sm";
+      repBtn.textContent = "替换";
+      repBtn.onclick = () => {
+        replaceTargetUid = p.uid;
+        $("search-title").textContent = "请选择要替换成的新海克斯：";
+        $("cancel-replace").style.display = "inline-block";
+        $("search-input").focus();
+      };
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn sm danger";
+      delBtn.textContent = "删除";
+      delBtn.onclick = () => api(`/api/picks/${p.uid}`, "DELETE");
+
+      main.appendChild(img);
+      main.appendChild(info);
+      main.appendChild(metricBtn);
+      main.appendChild(repBtn);
+      main.appendChild(delBtn);
+      row.appendChild(main);
+
+      if (openMetricEditorUid === p.uid) {
+        const draft = metricDrafts[p.uid] || [];
+        const editor = document.createElement("div");
+        editor.className = "metric-editor";
+
+        draft.forEach((m, idx) => {
+          const erow = document.createElement("div");
+          erow.className = "metric-edit-row";
+
+          const sel = document.createElement("select");
+          for (const preset of METRIC_KIND_PRESETS) {
+            const opt = document.createElement("option");
+            opt.value = preset.kind;
+            opt.textContent = preset.text;
+            if (preset.kind === m.kind) opt.selected = true;
+            sel.appendChild(opt);
+          }
+
+          const lblIn = document.createElement("input");
+          lblIn.type = "text";
+          lblIn.placeholder = "名称 (如: 叠层 / 已造成伤害)";
+          lblIn.value = m.label || "";
+          lblIn.style.width = "125px";
+
+          const valIn = document.createElement("input");
+          valIn.type = "text";
+          valIn.placeholder = "数值 (如: 12层 / 4,820)";
+          valIn.value = m.value || "";
+          valIn.style.width = "120px";
+
+          sel.onchange = () => {
+            m.kind = sel.value;
+            const found = METRIC_KIND_PRESETS.find(x => x.kind === sel.value);
+            if (found && (!m.label || METRIC_KIND_PRESETS.some(x => x.label === m.label))) {
+              m.label = found.label;
+              lblIn.value = found.label;
+            }
+          };
+          lblIn.oninput = () => { m.label = lblIn.value; };
+          valIn.oninput = () => { m.value = valIn.value; };
+
+          const rmBtn = document.createElement("button");
+          rmBtn.className = "btn sm danger";
+          rmBtn.textContent = "×";
+          rmBtn.onclick = () => {
+            draft.splice(idx, 1);
+            renderPicksList(latestState?.picks || picks);
+          };
+
+          erow.appendChild(sel);
+          erow.appendChild(lblIn);
+          erow.appendChild(valIn);
+          erow.appendChild(rmBtn);
+          editor.appendChild(erow);
+        });
+
+        const actions = document.createElement("div");
+        actions.className = "metric-edit-row";
+        const addBtn = document.createElement("button");
+        addBtn.className = "btn sm";
+        addBtn.textContent = "+ 添加一项";
+        addBtn.onclick = () => {
+          draft.push({ kind: "damage", label: "已造成伤害", value: "" });
+          renderPicksList(latestState?.picks || picks);
+        };
+        const saveBtn = document.createElement("button");
+        saveBtn.className = "btn sm primary";
+        saveBtn.textContent = "保存数值";
+        saveBtn.onclick = async () => {
+          const payload = draft
+            .filter(x => (x.label || "").trim() && (x.value || "").trim())
+            .map(x => ({ kind: x.kind || "stat", label: x.label.trim(), value: x.value.trim(), source: "manual" }));
+          openMetricEditorUid = null;
+          await api(`/api/picks/${p.uid}/metrics`, "POST", { metrics: payload });
+        };
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "btn sm";
+        closeBtn.textContent = "取消";
+        closeBtn.onclick = () => {
+          openMetricEditorUid = null;
+          renderPicksList(latestState?.picks || picks);
+        };
+        actions.appendChild(addBtn);
+        actions.appendChild(saveBtn);
+        actions.appendChild(closeBtn);
+        editor.appendChild(actions);
+        row.appendChild(editor);
+      }
+
+      listEl.appendChild(row);
+    }
+  }
+
   function renderState(state, config) {
+    latestState = state;
     lastConfig = config;
     setStatus("pill-lcu", "det-lcu", state.lcu, "未连接");
     setStatus("pill-live", "det-live", state.live_api, "等待对局");
@@ -556,66 +847,58 @@
 
     const cands = state.candidates || [];
     const candBox = $("candidates-box");
+    candBox.innerHTML = "";
     if (cands.length > 0) {
       candBox.style.display = "flex";
-      candBox.innerHTML = `<span style="font-size:12px;color:var(--warn);align-self:center;">当前候选：</span>` +
-        cands.map(c => `<span class="cand-chip">[卡位${c.slot_index + 1}] ${c.name} (${RARITY_LABEL[c.rarity] || ""})</span>`).join("");
+      const lbl = document.createElement("span");
+      lbl.style.cssText = "font-size:12px;color:var(--warn);align-self:center;";
+      lbl.textContent = "当前候选：";
+      candBox.appendChild(lbl);
+      for (const c of cands) {
+        const chip = document.createElement("span");
+        chip.className = "cand-chip";
+        chip.textContent = `[卡位${c.slot_index + 1}] ${c.name} (${RARITY_LABEL[c.rarity] || ""})`;
+        candBox.appendChild(chip);
+      }
     } else {
       candBox.style.display = "none";
     }
 
-    const listEl = $("picks-list");
-    const picks = state.picks || [];
-    if (!picks.length) {
-      listEl.innerHTML = `<div class="empty-hint">暂无已选海克斯。进入海克斯大乱斗选卡后将自动出现，也可在下方搜索补录或右侧点击「一键演示」。</div>`;
-    } else {
-      listEl.innerHTML = "";
-      for (const p of picks) {
-        const row = document.createElement("div");
-        row.className = `pick-row ${p.rarity || "silver"}`;
-        const iconSrc = p.icon_path ? `/api/icon/${p.icon_path.replace(/^\/+/, "")}` : "/api/icon/fallback";
-        row.innerHTML = `
-          <img src="${iconSrc}" alt="">
-          <div class="pick-info">
-            <div class="pick-name">${p.name} <span style="font-size:12px;color:var(--gold);font-weight:400;">[${RARITY_LABEL[p.rarity] || "强化"}${p.level ? ` · Lv.${p.level}` : ""}]</span></div>
-            <div class="pick-sub">${SOURCE_LABEL[p.source] || p.source}${p.description ? " · " + p.description : ""}</div>
-          </div>
-          <button class="btn sm" data-replace="${p.uid}">替换</button>
-          <button class="btn sm danger" data-del="${p.uid}">删除</button>
-        `;
-        listEl.appendChild(row);
-      }
-      listEl.querySelectorAll("[data-del]").forEach(b => {
-        b.onclick = () => api(`/api/picks/${b.dataset.del}`, "DELETE");
-      });
-      listEl.querySelectorAll("[data-replace]").forEach(b => {
-        b.onclick = () => {
-          replaceTargetUid = b.dataset.replace;
-          $("search-title").textContent = "请选择要替换成的新海克斯：";
-          $("cancel-replace").style.display = "inline-block";
-          $("search-input").focus();
-        };
-      });
-    }
+    renderPicksList(state.picks || []);
 
     // Events
     const evEl = $("events-list");
-    evEl.innerHTML = (state.events || []).slice(0, 20).map(ev => {
-      const t = new Date(ev.ts * 1000).toLocaleTimeString();
-      return `<div class="event-item">[${t}] [${ev.channel}] ${ev.message}</div>`;
-    }).join("") || `<div class="event-item">暂无诊断事件</div>`;
+    evEl.innerHTML = "";
+    const evs = (state.events || []).slice(0, 20);
+    if (!evs.length) {
+      const d = document.createElement("div");
+      d.className = "event-item";
+      d.textContent = "暂无诊断事件";
+      evEl.appendChild(d);
+    } else {
+      for (const ev of evs) {
+        const d = document.createElement("div");
+        d.className = "event-item";
+        const t = new Date(ev.ts * 1000).toLocaleTimeString();
+        d.textContent = `[${t}] [${ev.channel}] ${ev.message}`;
+        evEl.appendChild(d);
+      }
+    }
 
-    // Sync config inputs if not actively dragging
+    // Sync config inputs
     $("cfg-theme").value = config.theme;
+    $("cfg-display-mode").value = config.display_mode || (config.show_description ? "detailed" : "name_only");
     $("cfg-align").value = config.align;
     $("cfg-scale").value = String(config.scale);
     $("scale-val").textContent = Number(config.scale).toFixed(2);
     $("cfg-max").value = String(config.max_visible);
-    $("cfg-desc").checked = !!config.show_description;
+    $("cfg-flow").checked = config.show_transform_flow !== false;
+    $("cfg-metrics").checked = config.show_metrics !== false;
     $("cfg-level").checked = !!config.show_level_badge;
     $("cfg-header").checked = !!config.show_champion_header;
     $("cfg-tencent").checked = !!config.enable_tencent_log;
     $("cfg-vision").checked = !!config.enable_vision_fallback;
+    $("cfg-tooltip-ocr").checked = !!config.enable_tooltip_ocr;
     $("cfg-nonkiwi").checked = !!config.allow_non_kiwi_mode;
   }
 
@@ -631,16 +914,31 @@
     for (const aug of data.items || []) {
       const row = document.createElement("div");
       row.className = "result-row";
-      const iconSrc = aug.icon_path ? `/api/icon/${aug.icon_path.replace(/^\/+/, "")}` : "/api/icon/fallback";
-      row.innerHTML = `
-        <img src="${iconSrc}" alt="">
-        <div class="pick-info">
-          <div class="pick-name">${aug.name} <span style="font-size:11px;color:var(--muted);">(${RARITY_LABEL[aug.rarity] || ""})</span></div>
-          <div class="pick-sub">${aug.description || aug.key}</div>
-        </div>
-        <button class="btn sm primary">${replaceTargetUid ? "设为替换" : "+ 添加"}</button>
-      `;
-      row.querySelector("button").onclick = async () => {
+
+      const img = document.createElement("img");
+      img.src = aug.icon_path ? `/api/icon/${aug.icon_path.replace(/^\/+/, "")}` : "/api/icon/fallback";
+      img.alt = "";
+
+      const info = document.createElement("div");
+      info.className = "pick-info";
+      const nm = document.createElement("div");
+      nm.className = "pick-name";
+      nm.textContent = `${aug.name} `;
+      const rSp = document.createElement("span");
+      rSp.style.cssText = "font-size:11px;color:var(--muted);";
+      rSp.textContent = `(${RARITY_LABEL[aug.rarity] || ""})`;
+      nm.appendChild(rSp);
+
+      const sub = document.createElement("div");
+      sub.className = "pick-sub";
+      sub.textContent = aug.description || aug.key;
+      info.appendChild(nm);
+      info.appendChild(sub);
+
+      const btn = document.createElement("button");
+      btn.className = "btn sm primary";
+      btn.textContent = replaceTargetUid ? "设为替换" : "+ 添加";
+      btn.onclick = async () => {
         if (replaceTargetUid) {
           await api("/api/picks/replace", "POST", { uid: replaceTargetUid, augment_id: aug.id });
           replaceTargetUid = null;
@@ -650,6 +948,10 @@
           await api("/api/picks/add", "POST", { augment_id: aug.id });
         }
       };
+
+      row.appendChild(img);
+      row.appendChild(info);
+      row.appendChild(btn);
       box.appendChild(row);
     }
   }
@@ -680,15 +982,18 @@
     el.onchange = () => api("/api/config", "POST", { [key]: parse(el.type === "checkbox" ? el.checked : el.value) });
   }
   bindConfig($("cfg-theme"), "theme");
+  bindConfig($("cfg-display-mode"), "display_mode");
   bindConfig($("cfg-align"), "align");
   bindConfig($("cfg-scale"), "scale", Number);
   $("cfg-scale").oninput = () => $("scale-val").textContent = Number($("cfg-scale").value).toFixed(2);
   bindConfig($("cfg-max"), "max_visible", Number);
-  bindConfig($("cfg-desc"), "show_description", Boolean);
+  bindConfig($("cfg-flow"), "show_transform_flow", Boolean);
+  bindConfig($("cfg-metrics"), "show_metrics", Boolean);
   bindConfig($("cfg-level"), "show_level_badge", Boolean);
   bindConfig($("cfg-header"), "show_champion_header", Boolean);
   bindConfig($("cfg-tencent"), "enable_tencent_log", Boolean);
   bindConfig($("cfg-vision"), "enable_vision_fallback", Boolean);
+  bindConfig($("cfg-tooltip-ocr"), "enable_tooltip_ocr", Boolean);
   bindConfig($("cfg-nonkiwi"), "allow_non_kiwi_mode", Boolean);
 
   function connectWs() {

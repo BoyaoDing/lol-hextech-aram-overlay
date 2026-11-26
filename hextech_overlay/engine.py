@@ -17,6 +17,7 @@ from .lcu import LcuClient
 from .live_api import LiveClientApi, LiveSnapshot
 from .models import (
     AugmentInfo,
+    AugmentMetric,
     CandidateSlot,
     ChannelHealth,
     DiagnosticEvent,
@@ -24,6 +25,7 @@ from .models import (
     OverlayConfig,
     PickedAugment,
     PickSource,
+    TransformStep,
 )
 from .tencent_log import (
     TencentAugmentStateMachine,
@@ -42,7 +44,11 @@ from .vision_detector import (
     compute_card_stats,
     detect_card_layout,
     find_game_window_rect,
+    get_cursor_pos,
+    is_tab_key_down,
+    parse_tooltip_metrics,
     title_crop_boxes,
+    tooltip_crop_rect,
 )
 
 
@@ -88,6 +94,9 @@ class OverlayEngine:
         self._last_lcu_poll = 0.0
         self._last_live_poll = 0.0
         self._last_vision_scan = 0.0
+        self._last_tooltip_scan = 0.0
+        self._hover_anchor: tuple[int, int] | None = None
+        self._hover_since = 0.0
         self._last_game_time = 0.0
         self._last_champion_alias = ""
         self._in_active_match = False
@@ -214,6 +223,25 @@ class OverlayEngine:
         self._notify()
         return removed
 
+    def update_pick_metrics(self, uid: str, metrics: list[AugmentMetric]) -> PickedAugment | None:
+        now = time.time()
+        cleaned = [
+            m.model_copy(update={"updated_at": m.updated_at if m.updated_at is not None else now})
+            for m in metrics
+            if m.label.strip() and m.value.strip()
+        ]
+        with self._lock:
+            for idx, item in enumerate(self._state.picks):
+                if item.uid == uid:
+                    updated = item.model_copy(update={"metrics": cleaned})
+                    self._state.picks[idx] = updated
+                    summary = "、".join(f"{m.label}:{m.value}" for m in cleaned) or "已清空"
+                    self._add_event_locked("info", "metrics", f"更新数值「{item.name}」：{summary}")
+                    self._persist_session_locked()
+                    self._notify()
+                    return updated
+        return None
+
     def clear_picks(self) -> None:
         with self._lock:
             self._state.picks.clear()
@@ -323,30 +351,58 @@ class OverlayEngine:
             self._state.active_channel = "demo"
 
             if step == 1:
-                # Lv 3: 3-card selection appears
+                # Lv 3: 3-card selection featuring Transmute Chaos
                 self._state.level = 3
                 self._state.game_time = 25.0
                 cands = [
+                    self._demo_pick_by_keys("ARAM_TransmuteChaos", "TransmuteChaos"),
                     self._demo_pick_by_keys("ARAM_ApexInventor", "ApexInventor"),
-                    self._demo_pick_by_keys("ARAM_AllForYou", "AllForYou"),
-                    self._demo_pick_by_keys("ARAM_BreadAndButter", "BreadAndButter"),
+                    self._demo_pick_by_keys("ARAM_Dashing", "Dashing"),
                 ]
                 self._state.candidates = self._to_candidate_slots(cands)
-                self._add_event_locked("info", "demo", "3 级弹出海克斯三选一")
+                self._add_event_locked("info", "demo", "3 级弹出海克斯三选一（含质变：混沌）")
                 finished = False
             elif step == 2:
-                # Pick Lv 3 gold augment
-                pick_aug = self._demo_pick_by_keys("ARAM_ApexInventor", "ApexInventor")
+                # Pick Lv 3 Transmute Chaos -> splits into 2 grouped augments with live metrics
+                chaos = self._demo_pick_by_keys("ARAM_TransmuteChaos", "TransmuteChaos")
+                tank = self._demo_pick_by_keys("ARAM_TankEngine", "TankEngine")
+                conduit = self._demo_pick_by_keys("ARAM_InfernalConduit", "InfernalConduit")
                 self._state.candidates.clear()
-                self._append_demo_pick_locked(pick_aug, level=3, game_time=29.0, slot=0)
+                chaos_step = TransformStep(via_key=chaos.key, via_name=chaos.name, via_rarity=chaos.rarity)
+                grp_id = "demo_chaos_1"
+                self._append_demo_pick_locked(
+                    tank,
+                    level=3,
+                    game_time=29.0,
+                    slot=0,
+                    origin_group_id=grp_id,
+                    origin_key=chaos.key,
+                    origin_name=chaos.name,
+                    origin_rarity=chaos.rarity,
+                    lineage=[chaos_step],
+                    metrics=[AugmentMetric(label="叠层", value="12层", kind="stack", source="demo")],
+                )
+                self._append_demo_pick_locked(
+                    conduit,
+                    level=3,
+                    game_time=29.2,
+                    slot=None,
+                    origin_group_id=grp_id,
+                    origin_key=chaos.key,
+                    origin_name=chaos.name,
+                    origin_rarity=chaos.rarity,
+                    lineage=[chaos_step],
+                    metrics=[AugmentMetric(label="已造成伤害", value="4,280", kind="damage", source="demo")],
+                )
+                self._add_event_locked("info", "demo", f"3 级触发一变二：{chaos.name} → {tank.name} / {conduit.name}")
                 finished = False
             elif step == 3:
-                # Lv 7: 4-card (Mayhem 4.0) selection appears
+                # Lv 7: 4-card (Mayhem 4.0) selection featuring Transmute Gold
                 self._state.level = 7
                 self._state.game_time = 265.0
                 cands = [
+                    self._demo_pick_by_keys("ARAM_TransmuteGold", "TransmuteGold"),
                     self._demo_pick_by_keys("ARAM_Stats", "Stats"),
-                    self._demo_pick_by_keys("ARAM_ADAPt", "ADAPt"),
                     self._demo_pick_by_keys("ARAM_OceanSoul", "OceanSoul"),
                     self._demo_pick_by_keys("ARAM_Deft", "Deft"),
                 ]
@@ -354,26 +410,58 @@ class OverlayEngine:
                 self._add_event_locked("info", "demo", "7 级触发海斗 4.0 四选一")
                 finished = False
             elif step == 4:
-                pick_aug = self._demo_pick_by_keys("ARAM_Stats", "Stats")
+                # Lv 7 Transmute Gold -> Apex Inventor (3 picks total)
+                t_gold = self._demo_pick_by_keys("ARAM_TransmuteGold", "TransmuteGold")
+                apex = self._demo_pick_by_keys("ARAM_ApexInventor", "ApexInventor")
                 self._state.candidates.clear()
-                self._append_demo_pick_locked(pick_aug, level=7, game_time=271.0, slot=0)
+                self._append_demo_pick_locked(
+                    apex,
+                    level=7,
+                    game_time=271.0,
+                    slot=0,
+                    lineage=[TransformStep(via_key=t_gold.key, via_name=t_gold.name, via_rarity=t_gold.rarity)],
+                    metrics=[AugmentMetric(label="减少冷却", value="48秒", kind="stat", source="demo")],
+                )
+                self._add_event_locked("info", "demo", f"7 级质变：{t_gold.name} → {apex.name}")
                 finished = False
             elif step == 5:
-                # Lv 11: Prismatic
+                # Lv 11: Normal Prismatic pick (4 picks total)
                 self._state.level = 11
                 self._state.game_time = 540.0
                 pick_aug = self._demo_pick_by_keys("ARAM_BacktoBasics", "BacktoBasics")
-                self._append_demo_pick_locked(pick_aug, level=11, game_time=544.0, slot=1)
+                self._append_demo_pick_locked(
+                    pick_aug,
+                    level=11,
+                    game_time=544.0,
+                    slot=1,
+                    metrics=[AugmentMetric(label="额外伤害", value="3,150", kind="damage", source="demo")],
+                )
                 finished = False
             else:
-                # Lv 15: Transmute Chaos -> 696 reconciles into 2 prismatics (total 5)
+                # Lv 15: Pandora's Box rerolls all 4 existing picks + adds its own 5th Prismatic slot
                 self._state.level = 15
                 self._state.game_time = 820.0
-                p1 = self._demo_pick_by_keys("ARAM_Eureka", "Eureka")
-                p2 = self._demo_pick_by_keys("ARAM_JeweledGauntlet", "JeweledGauntlet")
-                self._append_demo_pick_locked(p1, level=15, game_time=824.0, slot=2)
-                self._append_demo_pick_locked(p2, level=15, game_time=824.5, slot=None, source="tencent_reconcile")
-                self._add_event_locked("info", "demo", "15 级质变校准：额外棱彩强化已同步")
+                pandora = self._demo_pick_by_keys("ARAM_PandorasBox", "PandorasBox")
+                self._append_demo_pick_locked(pandora, level=15, game_time=823.5, slot=0)
+                targets = [
+                    self._demo_pick_by_keys("ARAM_JeweledGauntlet", "JeweledGauntlet"),
+                    self._demo_pick_by_keys("ARAM_Eureka", "Eureka"),
+                    self._demo_pick_by_keys("ARAM_BladeWaltz", "BladeWaltz"),
+                    self._demo_pick_by_keys("ARAM_TapDancer", "TapDancer", "UltimateAwakening"),
+                    self._demo_pick_by_keys("ARAM_ClownCollege", "ClownCollege"),
+                ]
+                self._reconcile_picks_locked(targets, event_source="demo", assign_source="demo")
+                demo_metrics_by_slot = [
+                    [AugmentMetric(label="已造成伤害", value="8,640", kind="damage", source="demo")],
+                    [AugmentMetric(label="技能急速", value="+96", kind="stat", source="demo")],
+                    [AugmentMetric(label="已造成伤害", value="5,120", kind="damage", source="demo")],
+                    [AugmentMetric(label="叠层", value="18层", kind="stack", source="demo")],
+                    [AugmentMetric(label="已造成伤害", value="2,890", kind="damage", source="demo")],
+                ]
+                for idx, m_list in enumerate(demo_metrics_by_slot):
+                    if idx < len(self._state.picks):
+                        self._state.picks[idx] = self._state.picks[idx].model_copy(update={"metrics": m_list})
+                self._add_event_locked("info", "demo", "15 级连锁质变：潘朵拉的盒子重随全部海克斯并更新统计")
                 finished = True
 
         self._notify()
@@ -387,6 +475,12 @@ class OverlayEngine:
         game_time: float,
         slot: int | None,
         source: PickSource = "demo",
+        origin_group_id: str | None = None,
+        origin_key: str = "",
+        origin_name: str = "",
+        origin_rarity: Any = "unknown",
+        lineage: list[TransformStep] | None = None,
+        metrics: list[AugmentMetric] | None = None,
     ) -> None:
         self._state.picks.append(
             PickedAugment(
@@ -402,6 +496,12 @@ class OverlayEngine:
                 picked_at=time.time(),
                 source=source,
                 slot_index=slot,
+                origin_group_id=origin_group_id,
+                origin_key=origin_key,
+                origin_name=origin_name,
+                origin_rarity=origin_rarity,
+                lineage=list(lineage or []),
+                metrics=list(metrics or []),
             )
         )
         self._add_event_locked("info", source, f"模拟选取：{aug.name}（Lv.{level}）")
@@ -436,6 +536,8 @@ class OverlayEngine:
                     with self._lock:
                         if tencent_ready:
                             self._state.vision_ocr = ChannelHealth(status="idle", detail="已由腾讯精准通道接管，视觉识别休眠中")
+                if cfg.enable_tooltip_ocr and not self.vision_sm.is_open:
+                    self._step_tooltip_metrics_ocr(cfg, now)
                 self._stop_event.wait(0.08 if (not tencent_ready and cfg.enable_vision_fallback) else 0.25)
             else:
                 self._stop_event.wait(0.5)
@@ -676,27 +778,55 @@ class OverlayEngine:
                 for k in action.keys
             ]
             with self._lock:
-                current_keys = [p.key for p in self._state.picks]
-                target_keys = [a.key for a in augs]
-                if current_keys == target_keys:
-                    return False
-                # Preserve existing metadata (level/time) for unchanged keys; inherit level from replaced transform picks
-                existing_by_key = {p.key: p for p in self._state.picks}
-                replaced_transform_levels = [
-                    p.level
-                    for p in self._state.picks
-                    if p.key not in target_keys
-                    and classify_augment_transform(p.key) != "normal"
-                    and p.level is not None
-                ]
-                fallback_level = replaced_transform_levels[0] if replaced_transform_levels else (self._state.level or None)
-                manual_extras = [p for p in self._state.picks if p.source == "manual" and p.key not in target_keys]
-                new_picks: list[PickedAugment] = []
-                for aug in augs:
-                    prev = existing_by_key.get(aug.key)
-                    if prev is not None:
-                        new_picks.append(prev)
+                return self._reconcile_picks_locked(augs)
+
+        return False
+
+    def _reconcile_picks_locked(
+        self,
+        augs: list[AugmentInfo],
+        *,
+        event_source: str = "tencent_reconcile",
+        assign_source: PickSource = "tencent_reconcile",
+    ) -> bool:
+        """Reconcile 696 owned augments while recording transform chains and Chaos/Pandora lineage."""
+        prev_auto = [p for p in self._state.picks if p.source != "manual"]
+        target_keys = [a.key for a in augs]
+        if [p.key for p in prev_auto] == target_keys:
+            return False
+
+        manual_extras = [p for p in self._state.picks if p.source == "manual" and p.key not in target_keys]
+        now_ts = time.time()
+        new_picks: list[PickedAugment] = []
+
+        # Branch 1: Pandora's Box rerolls all prior slots into new Prismatics (+ its own slot).
+        pandora_pick = next(
+            (p for p in prev_auto if classify_augment_transform(p.key) == "pandora" and p.key not in target_keys),
+            None,
+        )
+        if pandora_pick is not None:
+            pre_pandora = [p for p in prev_auto if p.uid != pandora_pick.uid]
+            for idx, aug in enumerate(augs):
+                if idx < len(pre_pandora):
+                    old = pre_pandora[idx]
+                    if old.key == aug.key:
+                        new_picks.append(old)
                     else:
+                        steps = list(old.lineage)
+                        if classify_augment_transform(old.key) != "normal" and not any(
+                            st.via_key == old.key for st in steps
+                        ):
+                            steps.append(TransformStep(via_key=old.key, via_name=old.name, via_rarity=old.rarity))
+                        steps.append(
+                            TransformStep(
+                                via_key=pandora_pick.key,
+                                via_name=pandora_pick.name,
+                                via_rarity=pandora_pick.rarity,
+                                from_key=old.key,
+                                from_name=old.name,
+                                from_rarity=old.rarity,
+                            )
+                        )
                         new_picks.append(
                             PickedAugment(
                                 uid=uuid.uuid4().hex[:10],
@@ -706,19 +836,193 @@ class OverlayEngine:
                                 rarity=aug.rarity,
                                 icon_path=aug.icon_path,
                                 description=aug.description,
-                                level=fallback_level,
-                                game_time=self._state.game_time or None,
-                                picked_at=time.time(),
-                                source="tencent_reconcile",
+                                level=old.level or pandora_pick.level or (self._state.level or None),
+                                game_time=old.game_time if old.game_time is not None else (self._state.game_time or None),
+                                picked_at=now_ts,
+                                source=assign_source,
+                                origin_group_id=old.origin_group_id,
+                                origin_key=old.origin_key,
+                                origin_name=old.origin_name,
+                                origin_rarity=old.origin_rarity,
+                                lineage=steps,
                             )
                         )
-                new_picks.extend(manual_extras)
-                self._state.picks = new_picks
-                self._add_event_locked("info", "tencent_reconcile", f"全量校准已选海克斯：{' / '.join(a.name for a in augs)}")
-                self._persist_session_locked()
-            return True
+                else:
+                    new_picks.append(
+                        PickedAugment(
+                            uid=uuid.uuid4().hex[:10],
+                            augment_id=aug.id,
+                            key=aug.key,
+                            name=aug.name,
+                            rarity=aug.rarity,
+                            icon_path=aug.icon_path,
+                            description=aug.description,
+                            level=pandora_pick.level or (self._state.level or None),
+                            game_time=pandora_pick.game_time if pandora_pick.game_time is not None else (self._state.game_time or None),
+                            picked_at=now_ts,
+                            source=assign_source,
+                            lineage=[
+                                TransformStep(
+                                    via_key=pandora_pick.key,
+                                    via_name=pandora_pick.name,
+                                    via_rarity=pandora_pick.rarity,
+                                )
+                            ],
+                        )
+                    )
+        else:
+            # Branch 2: Match surviving keys in order; assign un-reconciled transforms to newly revealed slots.
+            queues: dict[str, list[PickedAugment]] = {}
+            for p in prev_auto:
+                queues.setdefault(p.key, []).append(p)
 
-        return False
+            matched_slots: list[PickedAugment | None] = [None] * len(augs)
+            new_indices: list[int] = []
+            for idx, aug in enumerate(augs):
+                q = queues.get(aug.key)
+                if q:
+                    matched_slots[idx] = q.pop(0)
+                else:
+                    new_indices.append(idx)
+
+            unmatched_prev = [p for p in prev_auto if p in sum(queues.values(), [])]
+            replaced_transforms = [p for p in unmatched_prev if classify_augment_transform(p.key) != "normal"]
+
+            assignments: dict[int, tuple[PickedAugment | None, str | None]] = {}
+            if len(replaced_transforms) == 1:
+                tr = replaced_transforms[0]
+                use_group = classify_augment_transform(tr.key) == "chaos" or len(new_indices) >= 2
+                grp_id = f"grp_{uuid.uuid4().hex[:8]}" if use_group else None
+                for idx in new_indices:
+                    assignments[idx] = (tr, grp_id)
+            elif len(replaced_transforms) > 1:
+                cursor = 0
+                for tr in replaced_transforms:
+                    if cursor >= len(new_indices):
+                        break
+                    is_chaos = classify_augment_transform(tr.key) == "chaos"
+                    take = min(2 if is_chaos else 1, len(new_indices) - cursor)
+                    grp_id = f"grp_{uuid.uuid4().hex[:8]}" if (is_chaos or take >= 2) else None
+                    for off in range(take):
+                        assignments[new_indices[cursor + off]] = (tr, grp_id)
+                    cursor += take
+                if cursor < len(new_indices):
+                    tail_tr = replaced_transforms[-1]
+                    for idx in new_indices[cursor:]:
+                        assignments[idx] = (tail_tr, None)
+            else:
+                king = next((p for p in prev_auto if p.key.lower().endswith("kingme")), None)
+                already_crowned = any(
+                    st.via_key.lower().endswith("kingme")
+                    for p in prev_auto
+                    for st in p.lineage
+                )
+                if king is not None and not already_crowned and len(new_indices) == 1 and augs[new_indices[0]].rarity == "prismatic":
+                    assignments[new_indices[0]] = (king, None)
+
+            for idx, aug in enumerate(augs):
+                existing = matched_slots[idx]
+                if existing is not None:
+                    new_picks.append(existing)
+                    continue
+                tr, grp_id = assignments.get(idx, (None, None))
+                steps: list[TransformStep] = []
+                level = self._state.level or None
+                game_time = self._state.game_time or None
+                origin_key = ""
+                origin_name = ""
+                origin_rarity: Any = "unknown"
+                if tr is not None:
+                    steps = list(tr.lineage) + [
+                        TransformStep(via_key=tr.key, via_name=tr.name, via_rarity=tr.rarity)
+                    ]
+                    if tr.level is not None and not tr.key.lower().endswith("kingme"):
+                        level = tr.level
+                    if grp_id is not None:
+                        origin_key = tr.origin_key or tr.key
+                        origin_name = tr.origin_name or tr.name
+                        origin_rarity = tr.origin_rarity if tr.origin_rarity != "unknown" else tr.rarity
+                new_picks.append(
+                    PickedAugment(
+                        uid=uuid.uuid4().hex[:10],
+                        augment_id=aug.id,
+                        key=aug.key,
+                        name=aug.name,
+                        rarity=aug.rarity,
+                        icon_path=aug.icon_path,
+                        description=aug.description,
+                        level=level,
+                        game_time=game_time,
+                        picked_at=now_ts,
+                        source=assign_source,
+                        origin_group_id=grp_id,
+                        origin_key=origin_key,
+                        origin_name=origin_name,
+                        origin_rarity=origin_rarity,
+                        lineage=steps,
+                    )
+                )
+
+        new_picks.extend(manual_extras)
+        self._state.picks = new_picks
+        self._add_event_locked("info", event_source, f"全量校准已选海克斯：{' / '.join(a.name for a in augs)}")
+        self._persist_session_locked()
+        return True
+
+    def _step_tooltip_metrics_ocr(self, cfg: OverlayConfig, now: float) -> None:
+        """Passively OCR hover tooltips over bottom-HUD/Tab augment icons to track stacks & damage."""
+        with self._lock:
+            picks_copy = [p.model_copy() for p in self._state.picks]
+        if not picks_copy:
+            return
+
+        rect = find_game_window_rect()
+        pos = get_cursor_pos()
+        if rect is None or pos is None:
+            self._hover_anchor = None
+            return
+
+        if (
+            self._hover_anchor is None
+            or abs(pos[0] - self._hover_anchor[0]) > 16
+            or abs(pos[1] - self._hover_anchor[1]) > 16
+        ):
+            self._hover_anchor = pos
+            self._hover_since = now
+            return
+
+        if (now - self._hover_since) < 0.35 or (now - self._last_tooltip_scan) < 0.9:
+            return
+
+        crop = tooltip_crop_rect(rect, pos, tab_held=is_tab_key_down())
+        if crop is None:
+            return
+
+        self._last_tooltip_scan = now
+        rgb = capture_rect_rgb(crop)
+        if rgb is None or not rgb.any():
+            return
+
+        lines = self.ocr_worker.recognize_image(Image.fromarray(rgb))
+        parsed = parse_tooltip_metrics(lines, picks_copy, self.catalog)
+        if parsed is None:
+            return
+
+        target_uid, new_metrics = parsed
+        with self._lock:
+            for idx, item in enumerate(self._state.picks):
+                if item.uid != target_uid:
+                    continue
+                old_sig = [(m.kind, m.label, m.value) for m in item.metrics]
+                new_sig = [(m.kind, m.label, m.value) for m in new_metrics]
+                if old_sig == new_sig:
+                    return
+                self._state.picks[idx] = item.model_copy(update={"metrics": new_metrics})
+                summary = "、".join(f"{m.label} {m.value}" for m in new_metrics)
+                self._add_event_locked("info", "tooltip_ocr", f"悬停识别数值：{item.name} ({summary})")
+                self._persist_session_locked()
+                self._notify()
+                return
 
     def _step_vision_channel(self, cfg: OverlayConfig, now: float) -> None:
         rect = find_game_window_rect()

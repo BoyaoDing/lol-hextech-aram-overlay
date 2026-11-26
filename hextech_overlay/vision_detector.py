@@ -5,9 +5,11 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
+import unicodedata
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +18,8 @@ from typing import Callable, Literal
 import numpy as np
 from PIL import Image, ImageOps
 
-from .catalog import AugmentCatalog
-from .models import AugmentInfo
+from .catalog import AugmentCatalog, normalize_title
+from .models import AugmentInfo, AugmentMetric, PickedAugment
 
 BASE_W = 1920
 BASE_H = 1080
@@ -372,6 +374,171 @@ class PassiveMouseTracker:
         if _user32.GetCursorPos(ctypes.byref(pt)):
             return (pt.x, pt.y)
         return None
+
+
+def get_cursor_pos() -> tuple[int, int] | None:
+    """Return current screen cursor position (x, y) without modifying input state."""
+    if not _ensure_win32():
+        return None
+    pt = wintypes.POINT()
+    if _user32.GetCursorPos(ctypes.byref(pt)):
+        return (int(pt.x), int(pt.y))
+    return None
+
+
+def is_tab_key_down() -> bool:
+    """Read-only check for whether the Tab scoreboard key is currently held."""
+    if not _ensure_win32():
+        return False
+    return bool(_user32.GetAsyncKeyState(0x09) & 0x8000)
+
+
+def tooltip_crop_rect(
+    game_rect: tuple[int, int, int, int],
+    cursor_xy: tuple[int, int],
+    *,
+    tab_held: bool = False,
+) -> tuple[int, int, int, int] | None:
+    """Return a clamped screen capture box near the cursor for bottom-HUD or Tab tooltips."""
+    gl, gt, gw, gh = game_rect
+    cx, cy = cursor_xy
+    if gw <= 0 or gh <= 0 or not (gl <= cx < gl + gw and gt <= cy < gt + gh):
+        return None
+
+    rel_x = (cx - gl) / float(gw)
+    rel_y = (cy - gt) / float(gh)
+    if rel_y < 0.70 and not (tab_held and 0.12 <= rel_x <= 0.88 and 0.12 <= rel_y <= 0.86):
+        return None
+
+    s = float(gh) / float(BASE_H)
+    box_w = max(80, int(round(520 * s)))
+    box_h = max(60, int(round(380 * s)))
+    if rel_y >= 0.70:
+        x0 = cx - int(round(180 * s))
+        y0 = cy - int(round(360 * s))
+    else:
+        x0 = cx - int(round(200 * s))
+        y0 = cy - int(round(220 * s))
+
+    x1 = min(gl + gw, max(gl + box_w, x0 + box_w))
+    y1 = min(gt + gh, max(gt + box_h, y0 + box_h))
+    x0 = max(gl, x1 - box_w)
+    y0 = max(gt, y1 - box_h)
+    w = x1 - x0
+    h = y1 - y0
+    if w < 80 or h < 60:
+        return None
+    return (x0, y0, w, h)
+
+
+_CJK_SPACE_LEFT_RE = re.compile(r"(?<=[\u4e00-\u9fff：，。！？（）【】、])\s+(?=[\u4e00-\u9fff：，。！？（）【】、:：0-9])")
+_CJK_SPACE_RIGHT_RE = re.compile(r"(?<=[0-9:：])\s+(?=[\u4e00-\u9fff])")
+_COMMA_NUM_SPACE_RE = re.compile(r",\s+(?=[0-9])")
+
+_DAMAGE_METRIC_RE = re.compile(
+    r"(?P<prefix>累计|总共|共|已|额外)?"
+    r"(?:造成(?:的)?(?:总|额外|魔法|物理|真实)?伤害|总伤害|伤害统计|额外伤害)"
+    r"[:：]?\s*([0-9][0-9,\.]*(?:\s*[kKwW万])?)"
+)
+_HEAL_METRIC_RE = re.compile(
+    r"(?:累计|总共|共|已)?(?:治疗(?:量|生命值)?|回复生命值)[:：]?\s*([0-9][0-9,\.]*(?:\s*[kKwW万])?)"
+)
+_SHIELD_METRIC_RE = re.compile(
+    r"(?:累计|总共|共|已)?(?:提供|格挡|吸收)?护盾(?:值|量)?[:：]?\s*([0-9][0-9,\.]*(?:\s*[kKwW万])?)"
+)
+_GOLD_METRIC_RE = re.compile(
+    r"(?:累计|总共|共|已)?(?:获得|赚取|窃取)(?:的)?金币[:：]?\s*([0-9][0-9,\.]*(?:\s*[kKwW万])?)"
+)
+_STACK_METRIC_RE_A = re.compile(r"(?:当前|已叠加|累计|总)?层数[:：]?\s*([0-9][0-9,\.]*)")
+_STACK_METRIC_RE_B = re.compile(r"(?:已叠加|叠加了|已获得|当前)[:：]?\s*([0-9][0-9,\.]*)\s*层")
+_TRIGGER_METRIC_RE = re.compile(r"(?:已触发|触发次数)[:：]?\s*([0-9][0-9,\.]*)\s*次?")
+_CDR_METRIC_RE = re.compile(r"(?:已减少|减少冷却(?:时间)?|冷却缩减)[:：]?\s*([0-9][0-9,\.]*)\s*[秒s]?")
+
+
+def _compact_ocr_line(text: str) -> str:
+    s = unicodedata.normalize("NFKC", text or "").strip()
+    s = _COMMA_NUM_SPACE_RE.sub(",", s)
+    s = _CJK_SPACE_LEFT_RE.sub("", s)
+    s = _CJK_SPACE_RIGHT_RE.sub("", s)
+    return s
+
+
+def parse_tooltip_metrics(
+    lines: list[str],
+    picks: list[PickedAugment],
+    catalog: AugmentCatalog,
+) -> tuple[str, list[AugmentMetric]] | None:
+    """Identify an owned augment from tooltip OCR lines and extract tracked counter metrics."""
+    compacted = [_compact_ocr_line(ln) for ln in lines if ln and ln.strip()]
+    if not compacted or not picks:
+        return None
+
+    owned_by_id = {p.augment_id: p for p in picks if p.augment_id > 0}
+    owned_by_key = {p.key.lower(): p for p in picks if p.key}
+    picks_by_name = sorted(
+        [(normalize_title(p.name), p) for p in picks if len(normalize_title(p.name)) >= 2],
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+
+    matched_pick: PickedAugment | None = None
+    for idx, line in enumerate(compacted[:5]):
+        norm_line = normalize_title(line)
+        if not norm_line:
+            continue
+        for norm_name, p in picks_by_name:
+            if norm_name in norm_line:
+                matched_pick = p
+                break
+        if matched_pick is not None:
+            break
+        aug, score = catalog.match_ocr_text(line)
+        if aug is not None and score >= 0.78:
+            candidate = owned_by_id.get(aug.id) or owned_by_key.get(aug.key.lower())
+            if candidate is not None:
+                matched_pick = candidate
+                break
+
+    if matched_pick is None:
+        return None
+
+    metrics: list[AugmentMetric] = []
+    seen_labels: set[tuple[str, str]] = set()
+    now = time.time()
+
+    def _add(kind: Literal["stack", "damage", "heal", "shield", "gold", "stat"], label: str, raw_val: str) -> None:
+        val = raw_val.replace(" ", "").strip()
+        if not val or (kind, label) in seen_labels:
+            return
+        seen_labels.add((kind, label))
+        metrics.append(AugmentMetric(label=label, value=val, kind=kind, source="tooltip_ocr", updated_at=now))
+
+    for line in compacted:
+        if m := _DAMAGE_METRIC_RE.search(line):
+            lbl = "额外伤害" if (m.group("prefix") == "额外" or "额外伤害" in m.group(0)) else "已造成伤害"
+            _add("damage", lbl, m.group(2))
+        if m := _HEAL_METRIC_RE.search(line):
+            _add("heal", "已治疗", m.group(1))
+        if m := _SHIELD_METRIC_RE.search(line):
+            _add("shield", "已提供护盾", m.group(1))
+        if m := _GOLD_METRIC_RE.search(line):
+            _add("gold", "已获金币", m.group(1))
+        if m := _STACK_METRIC_RE_A.search(line):
+            val = m.group(1).strip()
+            _add("stack", "叠层", val if val.endswith("层") else f"{val}层")
+        elif m := _STACK_METRIC_RE_B.search(line):
+            val = m.group(1).strip()
+            _add("stack", "叠层", val if val.endswith("层") else f"{val}层")
+        if m := _TRIGGER_METRIC_RE.search(line):
+            val = m.group(1).strip()
+            _add("stat", "触发", val if val.endswith("次") else f"{val}次")
+        if m := _CDR_METRIC_RE.search(line):
+            val = m.group(1).strip()
+            _add("stat", "减少冷却", val if val.endswith("秒") else f"{val}秒")
+
+    if not metrics:
+        return None
+    return matched_pick.uid, metrics
 
 
 # ------------------------------------------------------------------ Windows built-in OCR worker

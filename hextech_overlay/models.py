@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 Rarity = Literal["silver", "gold", "prismatic", "unknown"]
 ThemeName = Literal["vertical", "tray", "strip", "showcase"]
+DisplayMode = Literal["name_only", "compact", "detailed"]
+MetricKind = Literal["stack", "damage", "heal", "shield", "gold", "stat"]
 AlignName = Literal["left", "right", "center"]
 PickSource = Literal["tencent_log", "tencent_reconcile", "vision_click", "vision_flare", "manual", "demo"]
 ChannelStatus = Literal["idle", "active", "ready", "unavailable", "fallback", "error"]
@@ -25,6 +27,27 @@ class AugmentInfo(BaseModel):
     in_mayhem_pool: bool = False
 
 
+class TransformStep(BaseModel):
+    """One transformation or reroll transition leading to the active augment."""
+
+    via_key: str
+    via_name: str
+    via_rarity: Rarity = "unknown"
+    from_key: str = ""
+    from_name: str = ""
+    from_rarity: Rarity = "unknown"
+
+
+class AugmentMetric(BaseModel):
+    """Tracked in-match stack counter or cumulative combat statistic for an augment."""
+
+    label: str
+    value: str
+    kind: MetricKind = "stat"
+    source: Literal["tooltip_ocr", "manual", "demo"] = "manual"
+    updated_at: float | None = None
+
+
 class PickedAugment(BaseModel):
     """One augment acquired by the streamer in the current match."""
 
@@ -40,6 +63,12 @@ class PickedAugment(BaseModel):
     picked_at: float
     source: PickSource = "manual"
     slot_index: int | None = None
+    origin_group_id: str | None = None
+    origin_key: str = ""
+    origin_name: str = ""
+    origin_rarity: Rarity = "unknown"
+    lineage: list[TransformStep] = Field(default_factory=list)
+    metrics: list[AugmentMetric] = Field(default_factory=list)
 
 
 class CandidateSlot(BaseModel):
@@ -76,7 +105,10 @@ class OverlayConfig(BaseModel):
 
     port: int = Field(default=18777, ge=1024, le=65535)
     theme: ThemeName = "vertical"
-    show_description: bool = True
+    display_mode: DisplayMode = "name_only"
+    show_description: bool = False
+    show_transform_flow: bool = True
+    show_metrics: bool = True
     show_level_badge: bool = True
     show_champion_header: bool = True
     max_visible: int = Field(default=6, ge=1, le=12)
@@ -84,6 +116,7 @@ class OverlayConfig(BaseModel):
     align: AlignName = "left"
     enable_tencent_log: bool = True
     enable_vision_fallback: bool = True
+    enable_tooltip_ocr: bool = False
     allow_non_kiwi_mode: bool = False
     locale: str = "zh_cn"
     proxy_url: str = ""
