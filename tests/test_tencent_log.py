@@ -11,9 +11,12 @@ from pathlib import Path
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from hextech_overlay.engine import OverlayEngine
 from hextech_overlay.tencent_log import (
+    StateAction,
     TencentAugmentStateMachine,
     TencentLogTail,
+    classify_augment_transform,
     decode_tencent_log_line,
     derive_tencent_log_key,
     is_tencent_region,
@@ -248,6 +251,406 @@ class TestTencentLog(unittest.TestCase):
             lines3, reset3 = tail.read_new_lines()
             self.assertEqual(lines3, ["fresh-line"])
             self.assertTrue(reset3)
+
+    def test_first_pick_transmute_chaos_binds_and_reconciles(self) -> None:
+        puuid = "synthetic-chaos-001"
+        key = derive_tencent_log_key(puuid)
+        sm = TencentAugmentStateMachine()
+        t0 = 1795652000.0
+
+        self.assertEqual(classify_augment_transform("ARAM_TransmuteChaos"), "chaos")
+        self.assertEqual(classify_augment_transform("ARAM_TransmutePrismatic"), "transmute")
+        self.assertEqual(classify_augment_transform("ARAM_PandorasBox"), "pandora")
+        self.assertEqual(classify_augment_transform("ARAM_ApexInventor"), "normal")
+
+        # Lv 3: player picks ARAM_TransmuteChaos as their very first augment
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {
+                            "astAugments": [
+                                {"szAugmentName": "ARAM_TransmuteChaos"},
+                                {"szAugmentName": "ARAM_Eureka"},
+                                {"szAugmentName": "ARAM_BacktoBasics"},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0,
+                ),
+                key,
+            )
+        )
+        pick_acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 1.0),
+                key,
+            )
+        )
+        self.assertEqual(pick_acts[0].picked_key, "ARAM_TransmuteChaos")
+
+        # 696 shows player 202 jumped from 0 -> 2 random augments while 201 has 1
+        rec_acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 201, "astAugments": [{"szAugmentName": "ARAM_Stats"}]},
+                                {
+                                    "dwHeroNetID": 202,
+                                    "astAugments": [
+                                        {"szAugmentName": "ARAM_Eureka"},
+                                        {"szAugmentName": "ARAM_BacktoBasics"},
+                                    ],
+                                },
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 1.4,
+                ),
+                key,
+            )
+        )
+        self.assertEqual(sm.local_hero_net_id, 202)
+        self.assertEqual(len(rec_acts), 1)
+        self.assertEqual(rec_acts[0].kind, "reconcile_owned")
+        self.assertEqual(rec_acts[0].keys, ["ARAM_Eureka", "ARAM_BacktoBasics"])
+
+    def test_first_pick_transmute_prismatic_binds_and_reconciles(self) -> None:
+        puuid = "synthetic-prism-001"
+        key = derive_tencent_log_key(puuid)
+        sm = TencentAugmentStateMachine()
+        t0 = 1795653000.0
+
+        # Initial 696 shows 301 already has an augment before local player picks
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 301, "astAugments": [{"szAugmentName": "ARAM_Stats"}]},
+                                {"dwHeroNetID": 302, "astAugments": []},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {
+                            "astAugments": [
+                                {"szAugmentName": "ARAM_TransmutePrismatic"},
+                                {"szAugmentName": "ARAM_AllForYou"},
+                                {"szAugmentName": "ARAM_ADAPt"},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 1.0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 2.0),
+                key,
+            )
+        )
+        acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 301, "astAugments": [{"szAugmentName": "ARAM_Stats"}]},
+                                {"dwHeroNetID": 302, "astAugments": [{"szAugmentName": "ARAM_BacktoBasics"}]},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 2.3,
+                ),
+                key,
+            )
+        )
+        self.assertEqual(sm.local_hero_net_id, 302)
+        self.assertEqual(acts[0].kind, "reconcile_owned")
+        self.assertEqual(acts[0].keys, ["ARAM_BacktoBasics"])
+
+    def test_ambiguous_first_transmute_narrows_on_second_pick(self) -> None:
+        puuid = "synthetic-narrow-001"
+        key = derive_tencent_log_key(puuid)
+        sm = TencentAugmentStateMachine()
+        t0 = 1795654000.0
+
+        # Round 1 (Lv 3): Transmute Gold -> two players both go 0 -> 1 simultaneously
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {
+                            "astAugments": [
+                                {"szAugmentName": "ARAM_TransmuteGold"},
+                                {"szAugmentName": "ARAM_Stats"},
+                                {"szAugmentName": "ARAM_ADAPt"},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 1.0),
+                key,
+            )
+        )
+        acts1 = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 401, "astAugments": [{"szAugmentName": "ARAM_AllForYou"}]},
+                                {"dwHeroNetID": 402, "astAugments": [{"szAugmentName": "ARAM_ApexInventor"}]},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 1.5,
+                ),
+                key,
+            )
+        )
+        self.assertIsNone(sm.local_hero_net_id)
+        self.assertEqual(acts1, [])
+
+        # Round 2 (Lv 7): Normal pick ARAM_Eureka -> narrows down to 402 and backfills Lv 3 + Lv 7
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {
+                            "astAugments": [
+                                {"szAugmentName": "ARAM_Eureka"},
+                                {"szAugmentName": "ARAM_Stats"},
+                                {"szAugmentName": "ARAM_ADAPt"},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 60.0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 61.0),
+                key,
+            )
+        )
+        acts2 = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 401, "astAugments": [{"szAugmentName": "ARAM_AllForYou"}, {"szAugmentName": "ARAM_ADAPt"}]},
+                                {"dwHeroNetID": 402, "astAugments": [{"szAugmentName": "ARAM_ApexInventor"}, {"szAugmentName": "ARAM_Eureka"}]},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 61.4,
+                ),
+                key,
+            )
+        )
+        self.assertEqual(sm.local_hero_net_id, 402)
+        self.assertEqual(acts2[0].kind, "reconcile_owned")
+        self.assertEqual(acts2[0].keys, ["ARAM_ApexInventor", "ARAM_Eureka"])
+
+    def test_pandoras_box_clears_stable_keys_and_reconciles(self) -> None:
+        puuid = "synthetic-pandora-001"
+        key = derive_tencent_log_key(puuid)
+        sm = TencentAugmentStateMachine()
+        t0 = 1795655000.0
+
+        # Pick 1: normal augment
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {"astAugments": [{"szAugmentName": "ARAM_Stats"}, {"szAugmentName": "ARAM_ADAPt"}, {"szAugmentName": "ARAM_AllForYou"}]},
+                    },
+                    puuid,
+                    t0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 1.0),
+                key,
+            )
+        )
+        # Pick 2: Pandora's Box before any 696 bound yet
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {"astAugments": [{"szAugmentName": "ARAM_PandorasBox"}, {"szAugmentName": "ARAM_Eureka"}, {"szAugmentName": "ARAM_BacktoBasics"}]},
+                    },
+                    puuid,
+                    t0 + 20.0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 21.0),
+                key,
+            )
+        )
+        acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 501, "astAugments": [{"szAugmentName": "ARAM_Eureka"}, {"szAugmentName": "ARAM_BacktoBasics"}]},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 21.5,
+                ),
+                key,
+            )
+        )
+        self.assertEqual(sm.local_hero_net_id, 501)
+        self.assertEqual(acts[0].keys, ["ARAM_Eureka", "ARAM_BacktoBasics"])
+
+    def test_same_millisecond_696_not_dropped_and_engine_reconcile(self) -> None:
+        puuid = "synthetic-ms-001"
+        key = derive_tencent_log_key(puuid)
+        sm = TencentAugmentStateMachine()
+        t0 = 1795656000.123
+
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {"astAugments": [{"szAugmentName": "ARAM_TransmuteChaos"}, {"szAugmentName": "ARAM_Stats"}, {"szAugmentName": "ARAM_ADAPt"}]},
+                    },
+                    puuid,
+                    t0,
+                ),
+                key,
+            )
+        )
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 1.0),
+                key,
+            )
+        )
+        # Two 696 lines emitted within the exact same millisecond (t0 + 1.200)
+        self.assertEqual(
+            sm.observe(
+                decode_tencent_log_line(  # type: ignore[arg-type]
+                    make_log_line(
+                        {
+                            "form": "game",
+                            "dwSubCmd": 696,
+                            "params": {"astPlayerHextechAugmentSelectionList": [{"dwHeroNetID": 601, "astAugments": []}]},
+                        },
+                        puuid,
+                        t0 + 1.2,
+                    ),
+                    key,
+                )
+            ),
+            [],
+        )
+        acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 601, "astAugments": [{"szAugmentName": "ARAM_Eureka"}, {"szAugmentName": "BrandNewHotfixAugment"}]},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 1.2,
+                ),
+                key,
+            )
+        )
+        self.assertEqual(sm.local_hero_net_id, 601)
+        self.assertEqual(acts[0].keys, ["ARAM_Eureka", "BrandNewHotfixAugment"])
+
+        # Verify OverlayEngine replaces ARAM_TransmuteChaos cleanly, inherits Lv.3, and keeps unknown hotfix keys
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            engine = OverlayEngine(base / "data", base / "cache", enable_background_monitors=False)
+            engine._state.level = 3
+            engine._apply_tencent_action(StateAction(kind="picked", at=t0 + 1.0, picked_index=0, picked_key="ARAM_TransmuteChaos"))
+            self.assertEqual([p.key for p in engine._state.picks], ["ARAM_TransmuteChaos"])
+            engine._state.level = 4
+            applied = engine._apply_tencent_action(acts[0])
+            self.assertTrue(applied)
+            picks = engine._state.picks
+            self.assertEqual([p.key for p in picks], ["ARAM_Eureka", "BrandNewHotfixAugment"])
+            self.assertEqual([p.level for p in picks], [3, 3])
+            self.assertEqual(picks[1].name, "BrandNewHotfixAugment")
 
 
 if __name__ == "__main__":

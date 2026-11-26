@@ -22,6 +22,29 @@ MAX_READ_BYTES = 256 * 1024
 MAX_PARTIAL_BYTES = 256 * 1024
 TENCENT_SOURCE_STALE_SECONDS = 15.0
 TENCENT_CANDIDATE_MAX_AGE_SECONDS = 60.0
+PENDING_PICK_DIFF_WINDOW_SECONDS = 12.0
+
+_TRANSMUTE_ONE_BASES = {
+    "transmuteprismatic",
+    "transmutegold",
+    "transmutesilver",
+    "unstabletransmutation",
+}
+
+
+def classify_augment_transform(key: str) -> Literal["normal", "chaos", "transmute", "pandora"]:
+    """Classify augments that transform themselves or existing augments in 696 owned lists."""
+    base = key.strip()
+    if base.lower().startswith("aram_"):
+        base = base[5:]
+    low = base.lower()
+    if low == "transmutechaos":
+        return "chaos"
+    if low in _TRANSMUTE_ONE_BASES:
+        return "transmute"
+    if low == "pandorasbox":
+        return "pandora"
+    return "normal"
 
 _REGION_RE = re.compile(r"^(?:TENCENT|CN|CHINA)$", re.IGNORECASE)
 _TIMESTAMP_RE = re.compile(r"\b(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})\b")
@@ -280,6 +303,14 @@ class TencentLogTail:
         return [ln.rstrip("\r") for ln in lines if ln.strip()], reset
 
 
+@dataclass(frozen=True)
+class _PendingPick:
+    at: float
+    key: str
+    kind: Literal["normal", "chaos", "transmute", "pandora"]
+    prev_snapshot: dict[int, list[str]]
+
+
 class TencentAugmentStateMachine:
     """Correlates 693 candidates, 694 local selections, and 696 safe player reconciliation."""
 
@@ -290,9 +321,12 @@ class TencentAugmentStateMachine:
         self._last_event_at: float = 0.0
         self._last_selection_at: float = 0.0
         self._seen: OrderedDict[str, None] = OrderedDict()
-        self._confirmed_keys: list[str] = []
+        self._confirmed_stable_keys: list[str] = []
         self._local_hero_net_id: int | None = None
         self._last_owned_keys: list[str] | None = None
+        self._last_all_players: dict[int, list[str]] = {}
+        self._candidate_net_ids: set[int] | None = None
+        self._pending_pick: _PendingPick | None = None
 
     @property
     def local_hero_net_id(self) -> int | None:
@@ -309,14 +343,20 @@ class TencentAugmentStateMachine:
         self._last_event_at = 0.0
         self._last_selection_at = 0.0
         self._seen.clear()
+        self._pending_pick = None
         if not keep_picks:
-            self._confirmed_keys.clear()
+            self._confirmed_stable_keys.clear()
             self._local_hero_net_id = None
             self._last_owned_keys = None
+            self._last_all_players.clear()
+            self._candidate_net_ids = None
 
     def seed_confirmed_keys(self, keys: list[str], local_hero_net_id: int | None = None) -> None:
-        self._confirmed_keys = [k for k in keys if k]
+        self._confirmed_stable_keys = [
+            k for k in keys if k and classify_augment_transform(k) == "normal"
+        ]
         self._local_hero_net_id = local_hero_net_id
+        self._candidate_net_ids = {local_hero_net_id} if local_hero_net_id is not None else None
 
     def is_stale(self, now: float) -> bool:
         return self._last_record_at <= 0 or (now - self._last_record_at) > TENCENT_SOURCE_STALE_SECONDS
@@ -331,7 +371,12 @@ class TencentAugmentStateMachine:
         if event is None:
             return []
 
-        sig = f"{event.at:.3f}:{event.kind}:{event.index}:{event.keys}:{len(event.players)}"
+        if event.kind == "owned":
+            players_sig = tuple((p.net_id, tuple(p.keys)) for p in event.players)
+            sig = f"{event.at:.3f}:owned:{hash(players_sig)}:{len(players_sig)}:{players_sig}"
+        else:
+            sig = f"{event.at:.3f}:{event.kind}:{event.index}:{tuple(event.keys)}"
+
         if sig in self._seen or event.at + 1e-3 < self._last_event_at:
             return []
         self._seen[sig] = None
@@ -362,8 +407,20 @@ class TencentAugmentStateMachine:
             self._last_selection_at = event.at
             self._candidates = None
             self._last_nonempty = None
+
+            transform_kind = classify_augment_transform(picked_key or "")
             if picked_key:
-                self._confirmed_keys.append(picked_key)
+                if transform_kind == "normal":
+                    self._confirmed_stable_keys.append(picked_key)
+                elif transform_kind == "pandora":
+                    self._confirmed_stable_keys.clear()
+            self._pending_pick = _PendingPick(
+                at=event.at,
+                key=picked_key or "",
+                kind=transform_kind,
+                prev_snapshot={nid: list(ks) for nid, ks in self._last_all_players.items()},
+            )
+
             actions.append(
                 StateAction(
                     kind="picked",
@@ -374,7 +431,7 @@ class TencentAugmentStateMachine:
             )
 
         elif event.kind == "owned":
-            reconciled = self._handle_owned_event(event.players)
+            reconciled = self._handle_owned_event(event.at, event.players)
             if reconciled is not None:
                 actions.append(StateAction(kind="reconcile_owned", at=event.at, keys=reconciled))
 
@@ -395,24 +452,85 @@ class TencentAugmentStateMachine:
             end -= 1
         return list(keys[:end])
 
-    def _handle_owned_event(self, players: list[TencentOwnedPlayer]) -> list[str] | None:
-        """Bind local_hero_net_id only when uniquely proven by local 694 history."""
-        if self._local_hero_net_id is None:
-            if not self._confirmed_keys:
-                return None
-            matches: list[TencentOwnedPlayer] = []
-            for p in players:
-                non_empty = [k for k in p.keys if k]
-                if len(non_empty) >= len(self._confirmed_keys) and self._matches_prefix(non_empty, self._confirmed_keys):
-                    matches.append(p)
-            if len(matches) != 1:
-                return None
-            self._local_hero_net_id = matches[0].net_id
+    @staticmethod
+    def _matches_diff(prev: list[str], curr: list[str], pending: _PendingPick) -> bool:
+        if pending.kind == "chaos":
+            return (
+                (len(curr) >= len(prev) + 2 and curr[: len(prev)] == prev)
+                or (bool(pending.key) and pending.key in curr and pending.key not in prev)
+            )
+        if pending.kind == "transmute":
+            return len(curr) >= len(prev) + 1 and curr[: len(prev)] == prev and curr != prev
+        if pending.kind == "pandora":
+            return (
+                len(curr) >= max(1, len(prev))
+                and curr != prev
+                and (not prev or curr[: len(prev)] != prev or len(curr) > len(prev))
+            )
+        # normal pick
+        if pending.key:
+            return len(curr) >= len(prev) + 1 and curr.count(pending.key) > prev.count(pending.key)
+        return len(curr) >= len(prev) + 1
 
-        target = next((p for p in players if p.net_id == self._local_hero_net_id), None)
-        if target is None:
+    def _handle_owned_event(self, event_at: float, players: list[TencentOwnedPlayer]) -> list[str] | None:
+        """Bind local_hero_net_id via stable history or 694-to-696 delta narrowing."""
+        curr_map: dict[int, list[str]] = {
+            p.net_id: [k for k in p.keys if k]
+            for p in players
+        }
+
+        if self._local_hero_net_id is None:
+            stable_matches: set[int] = set()
+            if self._confirmed_stable_keys:
+                stable_matches = {
+                    nid
+                    for nid, owned in curr_map.items()
+                    if len(owned) >= len(self._confirmed_stable_keys)
+                    and self._matches_prefix(owned, self._confirmed_stable_keys)
+                }
+
+            pending = self._pending_pick
+            if pending is not None and (event_at - pending.at) > PENDING_PICK_DIFF_WINDOW_SECONDS:
+                self._pending_pick = None
+                pending = None
+
+            diff_matches: set[int] = set()
+            if pending is not None and 0.0 <= (event_at - pending.at) <= PENDING_PICK_DIFF_WINDOW_SECONDS:
+                diff_matches = {
+                    nid
+                    for nid, owned in curr_map.items()
+                    if self._matches_diff(pending.prev_snapshot.get(nid, []), owned, pending)
+                }
+
+            if diff_matches:
+                # Consume pending pick only once 696 reflects a matching transition.
+                self._pending_pick = None
+                if stable_matches and (diff_matches & stable_matches):
+                    round_set = diff_matches & stable_matches
+                else:
+                    round_set = diff_matches
+
+                if self._candidate_net_ids is None:
+                    self._candidate_net_ids = round_set
+                else:
+                    narrowed = self._candidate_net_ids & round_set
+                    self._candidate_net_ids = narrowed if narrowed else round_set
+            elif (pending is None or pending.kind == "normal") and stable_matches:
+                if self._candidate_net_ids is None:
+                    self._candidate_net_ids = stable_matches
+                else:
+                    narrowed = self._candidate_net_ids & stable_matches
+                    self._candidate_net_ids = narrowed if narrowed else stable_matches
+
+            if self._candidate_net_ids is not None and len(self._candidate_net_ids) == 1:
+                self._local_hero_net_id = next(iter(self._candidate_net_ids))
+
+        self._last_all_players = curr_map
+
+        if self._local_hero_net_id is None:
             return None
-        owned = [k for k in target.keys if k]
+
+        owned = curr_map.get(self._local_hero_net_id)
         if not owned or owned == self._last_owned_keys:
             return None
         self._last_owned_keys = list(owned)
@@ -422,6 +540,5 @@ class TencentAugmentStateMachine:
     def _matches_prefix(owned: list[str], confirmed: list[str]) -> bool:
         if owned[: len(confirmed)] == confirmed:
             return True
-        # Handle slight transformation where earlier picks shifted but confirmed order remains a subsequence
         it = iter(owned)
         return all(item in it for item in confirmed)

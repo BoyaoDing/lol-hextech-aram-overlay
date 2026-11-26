@@ -28,6 +28,7 @@ from .models import (
 from .tencent_log import (
     TencentAugmentStateMachine,
     TencentLogTail,
+    classify_augment_transform,
     decode_tencent_log_line,
     derive_tencent_log_key,
     is_tencent_region,
@@ -669,17 +670,26 @@ class OverlayEngine:
             return True
 
         if action.kind == "reconcile_owned":
-            resolved = [self.catalog.get_by_key(k) for k in action.keys]
-            if any(a is None for a in resolved):
-                return False
-            augs = [a for a in resolved if a is not None]
+            augs = [
+                self.catalog.get_by_key(k)
+                or AugmentInfo(id=-1, key=k, name=k, rarity="unknown")
+                for k in action.keys
+            ]
             with self._lock:
                 current_keys = [p.key for p in self._state.picks]
                 target_keys = [a.key for a in augs]
                 if current_keys == target_keys:
                     return False
-                # Preserve existing metadata (level/time) for unchanged keys, update mutations or extra picks
+                # Preserve existing metadata (level/time) for unchanged keys; inherit level from replaced transform picks
                 existing_by_key = {p.key: p for p in self._state.picks}
+                replaced_transform_levels = [
+                    p.level
+                    for p in self._state.picks
+                    if p.key not in target_keys
+                    and classify_augment_transform(p.key) != "normal"
+                    and p.level is not None
+                ]
+                fallback_level = replaced_transform_levels[0] if replaced_transform_levels else (self._state.level or None)
                 manual_extras = [p for p in self._state.picks if p.source == "manual" and p.key not in target_keys]
                 new_picks: list[PickedAugment] = []
                 for aug in augs:
@@ -696,7 +706,7 @@ class OverlayEngine:
                                 rarity=aug.rarity,
                                 icon_path=aug.icon_path,
                                 description=aug.description,
-                                level=self._state.level or None,
+                                level=fallback_level,
                                 game_time=self._state.game_time or None,
                                 picked_at=time.time(),
                                 source="tencent_reconcile",
