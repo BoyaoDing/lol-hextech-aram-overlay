@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>海克斯大乱斗直播插件 · 主播控制台</title>
+<style>
+  :root {
+    --bg: #070e18;
+    --panel: #0e1828;
+    --panel-2: #122035;
+    --border: rgba(200, 170, 110, 0.25);
+    --gold: #c8aa6e;
+    --gold-hi: #f0d79c;
+    --text: #eef3fb;
+    --muted: #8ea0b8;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --info: #38bdf8;
+    --silver: #98a4ae;
+    --prism: linear-gradient(135deg, #f7d774, #8be9cf, #c99af5, #f7a8d8);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(circle at top right, #11223a 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+    min-height: 100vh;
+  }
+
+  .wrap {
+    max-width: 1380px;
+    margin: 0 auto;
+    padding: 20px 24px 40px;
+  }
+
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 16px;
+  }
+
+  .brand h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    color: var(--gold-hi);
+    letter-spacing: 0.02em;
+  }
+
+  .brand p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .obs-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: var(--panel-2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 8px 12px;
+  }
+
+  .obs-url {
+    font-family: Consolas, monospace;
+    font-size: 13px;
+    color: #93c5fd;
+    user-select: all;
+  }
+
+  button, select, input[type="text"], input[type="number"] {
+    font: inherit;
+    color: var(--text);
+  }
+
+  .btn {
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: #182942;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .btn:hover { background: #213757; border-color: rgba(200, 170, 110, 0.55); }
+  .btn.primary { background: linear-gradient(180deg, #b8944f, #8f6e32); border-color: #e4c788; color: #fff; font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { border-color: rgba(248, 113, 113, 0.45); color: #fecaca; }
+  .btn.danger:hover { background: rgba(239, 68, 68, 0.2); }
+  .btn.sm { padding: 4px 9px; font-size: 12px; }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  @media (max-width: 960px) {
+    .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+
+  .stat-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .pill {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .pill.ready { background: rgba(52, 211, 153, 0.16); color: var(--ok); }
+  .pill.active { background: rgba(56, 189, 248, 0.16); color: var(--info); }
+  .pill.fallback { background: rgba(251, 191, 36, 0.18); color: var(--warn); }
+  .pill.error { background: rgba(248, 113, 113, 0.18); color: var(--err); }
+  .pill.idle, .pill.unavailable { background: rgba(148, 163, 184, 0.14); color: var(--muted); }
+
+  .stat-detail {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 16px;
+  }
+
+  @media (max-width: 1080px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+
+  .card-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  .panel-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 12px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--gold-hi);
+  }
+
+  .picks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .pick-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: var(--panel-2);
+    border-left: 4px solid var(--silver);
+  }
+
+  .pick-row.gold { border-left-color: #e3cda7; }
+  .pick-row.prismatic { border-left-color: #c99af5; }
+
+  .pick-row img {
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.35);
+    object-fit: contain;
+  }
+
+  .pick-info { flex: 1; min-width: 0; }
+  .pick-name { font-size: 14px; font-weight: 600; }
+  .pick-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .search-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+
+  .search-bar input, .search-bar select {
+    background: #0a1322;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+
+  .search-bar input { flex: 1; min-width: 180px; }
+
+  .search-results {
+    max-height: 290px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .result-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+  }
+
+  .result-row img {
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
+    background: rgba(0,0,0,0.35);
+  }
+
+  .preview-frame-wrap {
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+    height: 410px;
+    position: relative;
+    background: linear-gradient(135deg, #132136 0%, #0a101b 100%);
+  }
+
+  .preview-frame-wrap.checker {
+    background-color: #151b24;
+    background-image:
+      linear-gradient(45deg, #1d2531 25%, transparent 25%),
+      linear-gradient(-45deg, #1d2531 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #1d2531 75%),
+      linear-gradient(-45deg, transparent 75%, #1d2531 75%);
+    background-size: 24px 24px;
+    background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+  }
+
+  .preview-frame-wrap iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 13px;
+  }
+
+  .field label { color: var(--muted); font-size: 12px; }
+  .field select, .field input[type="number"] {
+    background: #0a1322;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 7px;
+    padding: 6px 9px;
+  }
+
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 6px;
+  }
+
+  .events-list {
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: Consolas, "Microsoft YaHei UI", monospace;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .event-item {
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.03);
+    color: #cbd5e1;
+  }
+
+  .cand-strip {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+
+  .cand-chip {
+    padding: 5px 10px;
+    border-radius: 7px;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    font-size: 12px;
+  }
+
+  .empty-hint {
+    padding: 20px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    border: 1px dashed rgba(255,255,255,0.12);
+    border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <h1>海克斯大乱斗 · 直播实时显示控制台</h1>
+      <p id="match-summary">正在等待对局或使用右侧「模拟演示」预览 OBS 效果</p>
+    </div>
+    <div class="obs-box">
+      <span style="font-size:12px;color:var(--muted)">OBS / 直播姬浏览器源地址：</span>
+      <span class="obs-url" id="obs-url">http://127.0.0.1:18777/overlay</span>
+      <button class="btn sm primary" id="copy-obs">复制地址</button>
+      <a class="btn sm" href="/overlay" target="_blank" style="text-decoration:none">新标签打开</a>
+    </div>
+  </div>
+
+  <div class="status-grid">
+    <div class="stat-card">
+      <div class="stat-head"><span>LOL 客户端 (LCU)</span><span class="pill idle" id="pill-lcu">检测中</span></div>
+      <div class="stat-detail" id="det-lcu">等待连接...</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-head"><span>局内数据接口 (2999)</span><span class="pill idle" id="pill-live">待机</span></div>
+      <div class="stat-detail" id="det-live">等待对局开始</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-head"><span>国服腾讯日志 (首选)</span><span class="pill idle" id="pill-tencent">待机</span></div>
+      <div class="stat-detail" id="det-tencent">对局开始后自动检查</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-head"><span>视觉 OCR (通用回退)</span><span class="pill idle" id="pill-vision">待机</span></div>
+      <div class="stat-detail" id="det-vision">必要时自动接管</div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div>
+      <div class="card-panel">
+        <div class="panel-title">
+          <span>当前对局已选海克斯</span>
+          <div style="display:flex;gap:6px;">
+            <button class="btn sm" id="btn-undo">撤销最后一个</button>
+            <button class="btn sm danger" id="btn-clear">清空</button>
+          </div>
+        </div>
+        <div id="candidates-box" class="cand-strip" style="display:none;"></div>
+        <div id="picks-list" class="picks-list">
+          <div class="empty-hint">暂无已选海克斯。进入海克斯大乱斗选卡后将自动出现，也可在下方搜索补录或右侧点击「模拟演示」。</div>
+        </div>
+      </div>
+
+      <div class="card-panel">
+        <div class="panel-title">
+          <span id="search-title">快速搜索补录 / 替换海克斯</span>
+          <button class="btn sm" id="cancel-replace" style="display:none;">取消替换模式</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-input" placeholder="输入海克斯名称或关键字（如：尖端、棱彩、飞弹）">
+          <select id="rarity-filter">
+            <option value="">全部品质</option>
+            <option value="prismatic">棱彩</option>
+            <option value="gold">黄金</option>
+            <option value="silver">白银</option>
+          </select>
+          <label class="check-row" style="margin:0;">
+            <input type="checkbox" id="mayhem-only" checked> 仅大乱斗池
+          </label>
+        </div>
+        <div id="search-results" class="search-results"></div>
+      </div>
+
+      <div class="card-panel">
+        <div class="panel-title">
+          <span>实时事件与通道诊断</span>
+          <span style="font-size:12px;color:var(--muted)" id="catalog-info"></span>
+        </div>
+        <div id="events-list" class="events-list"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card-panel">
+        <div class="panel-title">
+          <span>OBS 透明叠加层实时预览</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn sm" id="toggle-bg">切换透明棋盘格</button>
+            <button class="btn sm primary" id="demo-auto">一键演示</button>
+            <button class="btn sm" id="demo-next">下一步</button>
+            <button class="btn sm" id="demo-reset">重置</button>
+          </div>
+        </div>
+        <div id="preview-wrap" class="preview-frame-wrap">
+          <iframe src="/overlay" title="OBS 预览"></iframe>
+        </div>
+      </div>
+
+      <div class="card-panel">
+        <div class="panel-title">
+          <span>外观与检测设置</span>
+          <button class="btn sm" id="btn-refresh-catalog">同步最新海克斯目录</button>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>展示主题风格</label>
+            <select id="cfg-theme">
+              <option value="vertical">经典纵向卡片（最清晰）</option>
+              <option value="showcase">焦点弹窗 + 纵向列表（强推荐）</option>
+              <option value="tray">横向 HUD 托盘</option>
+              <option value="strip">极简单行紧凑条</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>对齐方向</label>
+            <select id="cfg-align">
+              <option value="left">左对齐</option>
+              <option value="center">居中</option>
+              <option value="right">右对齐</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>画面缩放 (<span id="scale-val">1.0</span>x)</label>
+            <input type="range" id="cfg-scale" min="0.6" max="1.6" step="0.05" value="1.0">
+          </div>
+          <div class="field">
+            <label>最大展示个数</label>
+            <input type="number" id="cfg-max" min="1" max="12" value="6">
+          </div>
+        </div>
+        <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
+          <label class="check-row"><input type="checkbox" id="cfg-desc"> 显示海克斯效果简介</label>
+          <label class="check-row"><input type="checkbox" id="cfg-level"> 显示获取等级标签</label>
+          <label class="check-row"><input type="checkbox" id="cfg-header"> 显示英雄头部提示栏</label>
+          <label class="check-row"><input type="checkbox" id="cfg-tencent"> 启用国服腾讯精准日志</label>
+          <label class="check-row"><input type="checkbox" id="cfg-vision"> 启用视觉 OCR 回退</label>
+          <label class="check-row"><input type="checkbox" id="cfg-nonkiwi"> 允许非海斗模式调试</label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const SOURCE_LABEL = {
+    tencent_log: "腾讯精准日志",
+    tencent_reconcile: "腾讯全量校准",
+    vision_click: "视觉点击识别",
+    vision_flare: "视觉闪光识别",
+    manual: "主播手动",
+    demo: "模拟演示"
+  };
+
+  const RARITY_LABEL = { silver: "白银", gold: "黄金", prismatic: "棱彩", unknown: "未知" };
+  let replaceTargetUid = null;
+  let lastConfig = null;
+
+  const $ = id => document.getElementById(id);
+  $("obs-url").textContent = `${location.origin}/overlay`;
+
+  $("copy-obs").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(`${location.origin}/overlay`);
+      $("copy-obs").textContent = "已复制!";
+      setTimeout(() => $("copy-obs").textContent = "复制地址", 1500);
+    } catch (_) {}
+  };
+
+  $("toggle-bg").onclick = () => {
+    $("preview-wrap").classList.toggle("checker");
+  };
+
+  async function api(url, method = "GET", body = null) {
+    const res = await fetch(url, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : null
+    });
+    return res.json();
+  }
+
+  function setStatus(pillId, detId, ch, fallbackText) {
+    const pill = $(pillId);
+    const det = $(detId);
+    const st = ch?.status || "idle";
+    pill.className = `pill ${st}`;
+    pill.textContent = { ready: "已就绪", active: "运行中", fallback: "回退中", error: "异常", unavailable: "不可用", idle: "待机" }[st] || st;
+    det.textContent = ch?.detail || fallbackText;
+  }
+
+  function renderState(state, config) {
+    lastConfig = config;
+    setStatus("pill-lcu", "det-lcu", state.lcu, "未连接");
+    setStatus("pill-live", "det-live", state.live_api, "等待对局");
+    setStatus("pill-tencent", "det-tencent", state.tencent_log, "待机");
+    setStatus("pill-vision", "det-vision", state.vision_ocr, "待机");
+
+    const champ = state.champion_name || state.champion_alias || "未在对局中";
+    const mins = Math.floor((state.game_time || 0) / 60);
+    const secs = String(Math.floor((state.game_time || 0) % 60)).padStart(2, "0");
+    $("match-summary").textContent =
+      `阶段: ${state.phase} | 模式: ${state.game_mode || "-"} | 英雄: ${champ} Lv.${state.level || 0} (${mins}:${secs}) | 当前通道: ${state.active_channel}`;
+    $("catalog-info").textContent = `本地海克斯库: ${state.catalog_count} 个 (海斗池 ${state.mayhem_pool_count})`;
+
+    const cands = state.candidates || [];
+    const candBox = $("candidates-box");
+    if (cands.length > 0) {
+      candBox.style.display = "flex";
+      candBox.innerHTML = `<span style="font-size:12px;color:var(--warn);align-self:center;">当前候选：</span>` +
+        cands.map(c => `<span class="cand-chip">[卡位${c.slot_index + 1}] ${c.name} (${RARITY_LABEL[c.rarity] || ""})</span>`).join("");
+    } else {
+      candBox.style.display = "none";
+    }
+
+    const listEl = $("picks-list");
+    const picks = state.picks || [];
+    if (!picks.length) {
+      listEl.innerHTML = `<div class="empty-hint">暂无已选海克斯。进入海克斯大乱斗选卡后将自动出现，也可在下方搜索补录或右侧点击「一键演示」。</div>`;
+    } else {
+      listEl.innerHTML = "";
+      for (const p of picks) {
+        const row = document.createElement("div");
+        row.className = `pick-row ${p.rarity || "silver"}`;
+        const iconSrc = p.icon_path ? `/api/icon/${p.icon_path.replace(/^\/+/, "")}` : "/api/icon/fallback";
+        row.innerHTML = `
+          <img src="${iconSrc}" alt="">
+          <div class="pick-info">
+            <div class="pick-name">${p.name} <span style="font-size:12px;color:var(--gold);font-weight:400;">[${RARITY_LABEL[p.rarity] || "强化"}${p.level ? ` · Lv.${p.level}` : ""}]</span></div>
+            <div class="pick-sub">${SOURCE_LABEL[p.source] || p.source}${p.description ? " · " + p.description : ""}</div>
+          </div>
+          <button class="btn sm" data-replace="${p.uid}">替换</button>
+          <button class="btn sm danger" data-del="${p.uid}">删除</button>
+        `;
+        listEl.appendChild(row);
+      }
+      listEl.querySelectorAll("[data-del]").forEach(b => {
+        b.onclick = () => api(`/api/picks/${b.dataset.del}`, "DELETE");
+      });
+      listEl.querySelectorAll("[data-replace]").forEach(b => {
+        b.onclick = () => {
+          replaceTargetUid = b.dataset.replace;
+          $("search-title").textContent = "请选择要替换成的新海克斯：";
+          $("cancel-replace").style.display = "inline-block";
+          $("search-input").focus();
+        };
+      });
+    }
+
+    // Events
+    const evEl = $("events-list");
+    evEl.innerHTML = (state.events || []).slice(0, 20).map(ev => {
+      const t = new Date(ev.ts * 1000).toLocaleTimeString();
+      return `<div class="event-item">[${t}] [${ev.channel}] ${ev.message}</div>`;
+    }).join("") || `<div class="event-item">暂无诊断事件</div>`;
+
+    // Sync config inputs if not actively dragging
+    $("cfg-theme").value = config.theme;
+    $("cfg-align").value = config.align;
+    $("cfg-scale").value = String(config.scale);
+    $("scale-val").textContent = Number(config.scale).toFixed(2);
+    $("cfg-max").value = String(config.max_visible);
+    $("cfg-desc").checked = !!config.show_description;
+    $("cfg-level").checked = !!config.show_level_badge;
+    $("cfg-header").checked = !!config.show_champion_header;
+    $("cfg-tencent").checked = !!config.enable_tencent_log;
+    $("cfg-vision").checked = !!config.enable_vision_fallback;
+    $("cfg-nonkiwi").checked = !!config.allow_non_kiwi_mode;
+  }
+
+  async function runSearch() {
+    const q = $("search-input").value.trim();
+    const rarity = $("rarity-filter").value;
+    const onlyMayhem = $("mayhem-only").checked;
+    const params = new URLSearchParams({ q, limit: "30", only_mayhem: String(onlyMayhem) });
+    if (rarity) params.set("rarity", rarity);
+    const data = await api(`/api/augments?${params.toString()}`);
+    const box = $("search-results");
+    box.innerHTML = "";
+    for (const aug of data.items || []) {
+      const row = document.createElement("div");
+      row.className = "result-row";
+      const iconSrc = aug.icon_path ? `/api/icon/${aug.icon_path.replace(/^\/+/, "")}` : "/api/icon/fallback";
+      row.innerHTML = `
+        <img src="${iconSrc}" alt="">
+        <div class="pick-info">
+          <div class="pick-name">${aug.name} <span style="font-size:11px;color:var(--muted);">(${RARITY_LABEL[aug.rarity] || ""})</span></div>
+          <div class="pick-sub">${aug.description || aug.key}</div>
+        </div>
+        <button class="btn sm primary">${replaceTargetUid ? "设为替换" : "+ 添加"}</button>
+      `;
+      row.querySelector("button").onclick = async () => {
+        if (replaceTargetUid) {
+          await api("/api/picks/replace", "POST", { uid: replaceTargetUid, augment_id: aug.id });
+          replaceTargetUid = null;
+          $("search-title").textContent = "快速搜索补录 / 替换海克斯";
+          $("cancel-replace").style.display = "none";
+        } else {
+          await api("/api/picks/add", "POST", { augment_id: aug.id });
+        }
+      };
+      box.appendChild(row);
+    }
+  }
+
+  $("cancel-replace").onclick = () => {
+    replaceTargetUid = null;
+    $("search-title").textContent = "快速搜索补录 / 替换海克斯";
+    $("cancel-replace").style.display = "none";
+  };
+
+  $("search-input").oninput = runSearch;
+  $("rarity-filter").onchange = runSearch;
+  $("mayhem-only").onchange = runSearch;
+
+  $("btn-undo").onclick = () => api("/api/picks/undo", "POST");
+  $("btn-clear").onclick = () => api("/api/picks/clear", "POST");
+  $("demo-auto").onclick = () => api("/api/demo/start", "POST", { auto_play: true });
+  $("demo-next").onclick = () => api("/api/demo/next", "POST");
+  $("demo-reset").onclick = () => api("/api/demo/reset", "POST");
+  $("btn-refresh-catalog").onclick = async () => {
+    $("btn-refresh-catalog").textContent = "同步中...";
+    const res = await api("/api/catalog/refresh", "POST");
+    $("btn-refresh-catalog").textContent = res.ok ? "同步完成" : "同步失败";
+    setTimeout(() => $("btn-refresh-catalog").textContent = "同步最新海克斯目录", 2000);
+  };
+
+  function bindConfig(el, key, parse = v => v) {
+    el.onchange = () => api("/api/config", "POST", { [key]: parse(el.type === "checkbox" ? el.checked : el.value) });
+  }
+  bindConfig($("cfg-theme"), "theme");
+  bindConfig($("cfg-align"), "align");
+  bindConfig($("cfg-scale"), "scale", Number);
+  $("cfg-scale").oninput = () => $("scale-val").textContent = Number($("cfg-scale").value).toFixed(2);
+  bindConfig($("cfg-max"), "max_visible", Number);
+  bindConfig($("cfg-desc"), "show_description", Boolean);
+  bindConfig($("cfg-level"), "show_level_badge", Boolean);
+  bindConfig($("cfg-header"), "show_champion_header", Boolean);
+  bindConfig($("cfg-tencent"), "enable_tencent_log", Boolean);
+  bindConfig($("cfg-vision"), "enable_vision_fallback", Boolean);
+  bindConfig($("cfg-nonkiwi"), "allow_non_kiwi_mode", Boolean);
+
+  function connectWs() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "snapshot") renderState(msg.state, msg.config);
+      } catch (_) {}
+    };
+    ws.onclose = () => setTimeout(connectWs, 1500);
+  }
+
+  api("/api/state").then(d => renderState(d.state, d.config));
+  runSearch();
+  connectWs();
+})();
+</script>
+</body>
+</html>
