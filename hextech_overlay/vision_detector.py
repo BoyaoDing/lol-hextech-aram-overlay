@@ -103,27 +103,31 @@ def has_visible_card_frames(rgb: np.ndarray, layout: AugmentLayout) -> bool:
         r = sub[..., 0].astype(np.int16)
         g = sub[..., 1].astype(np.int16)
         b = sub[..., 2].astype(np.int16)
-        spread = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
-        return (r >= min_r) & (g >= min_g) & (b >= min_b) & (spread <= 125)
+        mx = np.maximum(np.maximum(r, g), b)
+        mn = np.minimum(np.minimum(r, g), b)
+        spread = mx - mn
+        metallic = (r >= min_r) & (g >= min_g) & (b >= min_b) & (spread <= 125)
+        prismatic = (mx >= 145) & ((r + g + b) >= 310) & (mn >= 55)
+        return metallic | prismatic
 
     def has_card_at(left: float) -> bool:
         ys_top = np.clip(np.round(h * np.linspace(0.14, 0.23, 24)).astype(int), 0, h - 1)
         xs_top = np.clip(np.round(left + card_w * np.linspace(0.15, 0.85, 36)).astype(int), 0, w - 1)
         top_cov = float(is_border_patch(xs_top, ys_top).mean(axis=1).max())
-        if top_cov < 0.78:
+        if top_cov < 0.52:
             return False
 
         ys_edge = np.clip(np.round(h * np.linspace(0.24, 0.35, 24)).astype(int), 0, h - 1)
         for edge in (0.0, 0.91):
             xs_edge = np.clip(np.round(left + card_w * np.linspace(edge, edge + 0.09, 12)).astype(int), 0, w - 1)
             edge_cov = float(is_border_patch(xs_edge, ys_edge).mean(axis=0).max())
-            if edge_cov < 0.78:
+            if edge_cov < 0.58:
                 return False
 
         ys_in = np.clip(np.round(h * np.linspace(0.50, 0.60, 8)).astype(int), 0, h - 1)
         xs_in = np.clip(np.round(left + card_w * np.linspace(0.20, 0.80, 8)).astype(int), 0, w - 1)
         interior = rgb[np.ix_(ys_in, xs_in)][..., :3].max(axis=2)
-        return float((interior < 90).mean()) >= 0.48
+        return float((interior < 95).mean()) >= 0.45
 
     visible = 0
     for slot in range(layout.slot_count):

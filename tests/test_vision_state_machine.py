@@ -70,6 +70,27 @@ class TestVisionStateMachine(unittest.TestCase):
         blank = np.full((540, 960, 3), 45, dtype=np.uint8)
         self.assertIsNone(detect_card_layout(blank))
 
+        # Prismatic holographic colorful borders with a curved center notch still match
+        f_prism = np.full((540, 960, 3), 30, dtype=np.uint8)
+        cw, cg, _, gl = get_card_geometry(960, 540, THREE_CARD_LAYOUT)
+        y_top = int(round(540 * 0.16))
+        y_bot = int(round(540 * 0.67))
+        for slot in range(3):
+            left = int(round(gl + slot * (cw + cg)))
+            right = int(round(left + cw))
+            f_prism[y_top:y_bot, left:right] = (18, 20, 26)
+            mid_l = left + int(cw * 0.42)
+            mid_r = left + int(cw * 0.58)
+            f_prism[y_top : y_top + 4, left:mid_l] = (139, 233, 207)
+            f_prism[y_top : y_top + 4, mid_r:right] = (201, 154, 245)
+            f_prism[y_top:y_bot, left : left + 4] = (201, 154, 245)
+            f_prism[y_top:y_bot, right - 4 : right] = (139, 233, 207)
+        self.assertEqual(detect_card_layout(f_prism), THREE_CARD_LAYOUT)
+
+        # Bright snowy/floor gameplay frame without dark card interiors must NOT trigger
+        bright = np.full((540, 960, 3), (175, 190, 205), dtype=np.uint8)
+        self.assertIsNone(detect_card_layout(bright))
+
     def test_click_classification_and_hide_revert(self) -> None:
         sm = VisualSelectionStateMachine(self.catalog)
         a0 = self.catalog.get_by_key("ARAM_ApexInventor")

@@ -35,6 +35,7 @@ from .tencent_log import (
     derive_tencent_log_key,
     is_tencent_region,
     locate_icreate_log,
+    probe_tencent_gdp_enabled,
 )
 from .vision_detector import (
     PassiveMouseTracker,
@@ -100,6 +101,8 @@ class OverlayEngine:
         self._last_game_time = 0.0
         self._last_champion_alias = ""
         self._in_active_match = False
+        self._tencent_gdp_enabled: bool | None = None
+        self._tencent_gdp_warned: bool = False
         self._ocr_title_cache: dict[int, tuple[AugmentInfo | None, float]] = {}
 
     def set_on_change(self, cb: Callable[[], None] | None) -> None:
@@ -687,6 +690,14 @@ class OverlayEngine:
                 self._set_tencent_status("unavailable", "未找到腾讯 icreate 日志，使用视觉识别")
                 return False
             self.tencent_tail = TencentLogTail(self.tencent_log_path, start_at_end=True)
+            self._tencent_gdp_enabled = probe_tencent_gdp_enabled(self.tencent_log_path, self.tencent_key)
+            if self._tencent_gdp_enabled is False and not self._tencent_gdp_warned:
+                self._tencent_gdp_warned = True
+                self._add_event(
+                    "warn",
+                    "tencent_log",
+                    "检测到 LOL 客户端「英雄时刻」高光录制未开启 (gdp=false)，腾讯精准日志不会输出海克斯事件；请在客户端开启「英雄时刻」录制后重开对局，当前已回退视觉 OCR",
+                )
 
         assert self.tencent_tail is not None
         try:
@@ -705,6 +716,23 @@ class OverlayEngine:
             rec = decode_tencent_log_line(line, self.tencent_key)
             if rec is None:
                 continue
+            if rec.gdp_enabled is not None:
+                prev_gdp = self._tencent_gdp_enabled
+                self._tencent_gdp_enabled = rec.gdp_enabled
+                if rec.gdp_enabled is False and (prev_gdp is not False or not self._tencent_gdp_warned):
+                    self._tencent_gdp_warned = True
+                    self._add_event(
+                        "warn",
+                        "tencent_log",
+                        "检测到 LOL 客户端「英雄时刻」高光录制未开启 (gdp=false)，腾讯精准日志不会输出海克斯事件；请在客户端开启「英雄时刻」录制后重开对局，当前已回退视觉 OCR",
+                    )
+                elif rec.gdp_enabled is True and prev_gdp is False:
+                    self._tencent_gdp_warned = False
+                    self._add_event("info", "tencent_log", "检测到腾讯英雄时刻事件通道已开启 (gdp=true)")
+            if rec.sub_cmd < 0:
+                continue
+            self._tencent_gdp_enabled = True
+            self._tencent_gdp_warned = False
             for action in self.tencent_sm.observe(rec):
                 if self._apply_tencent_action(action):
                     dirty = True
@@ -717,7 +745,10 @@ class OverlayEngine:
                 self._notify()
             return True
 
-        self._set_tencent_status("fallback", "等待腾讯日志心跳，视觉回退就绪")
+        if self._tencent_gdp_enabled is False:
+            self._set_tencent_status("unavailable", "客户端「英雄时刻」高光录制未开启 (gdp=false)，开启后启用精准识别")
+        else:
+            self._set_tencent_status("fallback", "等待腾讯日志心跳，视觉回退就绪")
         return False
 
     def _apply_tencent_action(self, action: Any) -> bool:

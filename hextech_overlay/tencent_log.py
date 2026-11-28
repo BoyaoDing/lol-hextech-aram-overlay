@@ -46,6 +46,11 @@ def classify_augment_transform(key: str) -> Literal["normal", "chaos", "transmut
         return "pandora"
     return "normal"
 
+
+def is_stat_anvil_key(key: str) -> bool:
+    """Identify Mayhem Stat Anvil choices logged via 693/694 that are not augments."""
+    return "statanvil" in (key or "").strip().lower()
+
 _REGION_RE = re.compile(r"^(?:TENCENT|CN|CHINA)$", re.IGNORECASE)
 _TIMESTAMP_RE = re.compile(r"\b(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})\b")
 _CIPHER_RE = re.compile(r"(?:^|\s)([a-fA-F0-9]{32,})\s*$")
@@ -74,6 +79,7 @@ class TencentLogRecord:
     at: float
     sub_cmd: int
     event: TencentAugmentEvent | None
+    gdp_enabled: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +171,10 @@ def decode_tencent_log_line(line: str, key: bytes) -> TencentLogRecord | None:
 
     marker = plaintext.find("game-log-> ")
     if marker < 0:
+        if "settingEnableChange gdp false" in plaintext:
+            return TencentLogRecord(at=at_ts, sub_cmd=-1, event=None, gdp_enabled=False)
+        if "settingEnableChange gdp true" in plaintext:
+            return TencentLogRecord(at=at_ts, sub_cmd=-1, event=None, gdp_enabled=True)
         return None
 
     try:
@@ -223,7 +233,39 @@ def decode_tencent_log_line(line: str, key: bytes) -> TencentLogRecord | None:
             players.append(TencentOwnedPlayer(net_id=net_id, keys=p_keys))
         event = TencentAugmentEvent(kind="owned", at=at_ts, players=players)
 
-    return TencentLogRecord(at=at_ts, sub_cmd=sub_cmd, event=event)
+    return TencentLogRecord(at=at_ts, sub_cmd=sub_cmd, event=event, gdp_enabled=True)
+
+
+def probe_tencent_gdp_enabled(file_path: Path, key: bytes, max_bytes: int = MAX_READ_BYTES) -> bool | None:
+    """Inspect recent icreate main.log tail to see if highlight event capture (gdp) is enabled."""
+    if len(key) != 16:
+        return None
+    try:
+        path = Path(file_path)
+        if not path.is_file():
+            return None
+        with open(path, "rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            offset = max(0, size - max_bytes)
+            handle.seek(offset, os.SEEK_SET)
+            raw = handle.read(max_bytes)
+    except OSError:
+        return None
+
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    if offset > 0 and lines:
+        lines = lines[1:]
+    for ln in reversed(lines):
+        if not ln.strip():
+            continue
+        rec = decode_tencent_log_line(ln, key)
+        if rec is None:
+            continue
+        if rec.gdp_enabled is not None:
+            return rec.gdp_enabled
+        if rec.sub_cmd >= 0:
+            return True
+    return None
 
 
 class TencentLogTail:
@@ -327,6 +369,7 @@ class TencentAugmentStateMachine:
         self._last_all_players: dict[int, list[str]] = {}
         self._candidate_net_ids: set[int] | None = None
         self._pending_pick: _PendingPick | None = None
+        self._ignoring_anvil_offer: bool = False
 
     @property
     def local_hero_net_id(self) -> int | None:
@@ -344,6 +387,7 @@ class TencentAugmentStateMachine:
         self._last_selection_at = 0.0
         self._seen.clear()
         self._pending_pick = None
+        self._ignoring_anvil_offer = False
         if not keep_picks:
             self._confirmed_stable_keys.clear()
             self._local_hero_net_id = None
@@ -353,7 +397,7 @@ class TencentAugmentStateMachine:
 
     def seed_confirmed_keys(self, keys: list[str], local_hero_net_id: int | None = None) -> None:
         self._confirmed_stable_keys = [
-            k for k in keys if k and classify_augment_transform(k) == "normal"
+            k for k in keys if k and classify_augment_transform(k) == "normal" and not is_stat_anvil_key(k)
         ]
         self._local_hero_net_id = local_hero_net_id
         self._candidate_net_ids = {local_hero_net_id} if local_hero_net_id is not None else None
@@ -362,6 +406,9 @@ class TencentAugmentStateMachine:
         return self._last_record_at <= 0 or (now - self._last_record_at) > TENCENT_SOURCE_STALE_SECONDS
 
     def observe(self, record: TencentLogRecord) -> list[StateAction]:
+        if record.sub_cmd < 0:
+            return []
+
         if self._last_record_at and record.at - self._last_record_at > TENCENT_SOURCE_STALE_SECONDS:
             self._candidates = None
             self._last_nonempty = None
@@ -389,16 +436,33 @@ class TencentAugmentStateMachine:
             if event.at <= self._last_selection_at:
                 return []
             keys = self._trim_trailing_empty(event.keys)
-            if any(keys):
+            non_empty = [k for k in keys if k]
+            if non_empty and all(is_stat_anvil_key(k) for k in non_empty):
+                self._ignoring_anvil_offer = True
+                self._candidates = None
+                self._last_nonempty = None
+                return []
+            if non_empty:
+                self._ignoring_anvil_offer = False
                 self._candidates = (event.at, keys)
                 self._last_nonempty = (event.at, keys)
                 actions.append(StateAction(kind="candidates", at=event.at, keys=keys))
             else:
+                if self._ignoring_anvil_offer:
+                    self._candidates = None
+                    return []
                 # Empty 693 can arrive right before 694; clear UI candidates while retaining _last_nonempty.
                 self._candidates = None
                 actions.append(StateAction(kind="candidates", at=event.at, keys=[]))
 
         elif event.kind == "selected":
+            if self._ignoring_anvil_offer:
+                self._ignoring_anvil_offer = False
+                self._last_selection_at = event.at
+                self._candidates = None
+                self._last_nonempty = None
+                return []
+
             picked_key: str | None = None
             if self._last_nonempty is not None:
                 cand_at, cand_keys = self._last_nonempty
@@ -407,6 +471,8 @@ class TencentAugmentStateMachine:
             self._last_selection_at = event.at
             self._candidates = None
             self._last_nonempty = None
+            if picked_key and is_stat_anvil_key(picked_key):
+                return []
 
             transform_kind = classify_augment_transform(picked_key or "")
             if picked_key:

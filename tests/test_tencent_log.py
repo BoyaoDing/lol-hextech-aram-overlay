@@ -21,21 +21,27 @@ from hextech_overlay.tencent_log import (
     classify_augment_transform,
     decode_tencent_log_line,
     derive_tencent_log_key,
+    is_stat_anvil_key,
     is_tencent_region,
     parse_icreate_log_dir,
+    probe_tencent_gdp_enabled,
 )
 
 
-def make_log_line(payload: dict, puuid: str, ts_epoch: float) -> str:
+def make_raw_log_line(plaintext: str, puuid: str, ts_epoch: float) -> str:
     key = derive_tencent_log_key(puuid)
     stamp = datetime.fromtimestamp(ts_epoch).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    raw = ("game-log-> " + json.dumps(payload)).encode("utf-8")
+    raw = plaintext.encode("utf-8")
     padder = padding.PKCS7(128).padder()
     padded = padder.update(raw) + padder.finalize()
     cipher = Cipher(algorithms.AES(key), modes.CBC(key))
     enc = cipher.encryptor()
     hex_ct = (enc.update(padded) + enc.finalize()).hex()
-    return f"[{stamp}] [info] {hex_ct}\n"
+    return f"[{stamp}] [info]  {hex_ct}\n"
+
+
+def make_log_line(payload: dict, puuid: str, ts_epoch: float) -> str:
+    return make_raw_log_line("game-log-> " + json.dumps(payload), puuid, ts_epoch)
 
 
 class TestTencentLog(unittest.TestCase):
@@ -746,6 +752,156 @@ class TestTencentLog(unittest.TestCase):
             engine._apply_tencent_action(StateAction(kind="reconcile_owned", at=120.0, keys=["KingMe", "ARAM_Eureka"]))
             self.assertEqual([p.key for p in engine._state.picks], ["KingMe", "ARAM_Eureka"])
             self.assertEqual([s.via_key for s in engine._state.picks[1].lineage], ["KingMe"])
+
+    def test_stat_anvils_ignored_and_do_not_pollute_binding(self) -> None:
+        self.assertTrue(is_stat_anvil_key("ARAM_StatAnvil_Hybrid2"))
+        self.assertTrue(is_stat_anvil_key("ARAM_GoldStatAnvil_HP"))
+        self.assertFalse(is_stat_anvil_key("ARAM_Eureka"))
+
+        puuid = "synthetic-anvil-001"
+        key = derive_tencent_log_key(puuid)
+        sm = TencentAugmentStateMachine()
+        t0 = 1795658000.0
+
+        # Stat Anvil 693 -> 694 -> empty 693 must produce no candidate/pick actions and stay out of stable keys
+        r_anvil_cands = decode_tencent_log_line(
+            make_log_line(
+                {
+                    "form": "game",
+                    "dwSubCmd": 693,
+                    "params": {
+                        "astAugments": [
+                            {"szAugmentName": "ARAM_StatAnvil_Hybrid2"},
+                            {"szAugmentName": "ARAM_StatAnvil_Lethality"},
+                            {"szAugmentName": "ARAM_StatAnvil_AS"},
+                            {"szAugmentName": ""},
+                        ]
+                    },
+                },
+                puuid,
+                t0,
+            ),
+            key,
+        )
+        r_anvil_empty = decode_tencent_log_line(
+            make_log_line(
+                {"form": "game", "dwSubCmd": 693, "params": {"astAugments": [{"szAugmentName": ""}, {"szAugmentName": ""}, {"szAugmentName": ""}]}},
+                puuid,
+                t0 + 1.0,
+            ),
+            key,
+        )
+        r_anvil_pick = decode_tencent_log_line(
+            make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 1}}, puuid, t0 + 1.2),
+            key,
+        )
+        assert r_anvil_cands and r_anvil_empty and r_anvil_pick
+        self.assertEqual(sm.observe(r_anvil_cands), [])
+        self.assertEqual(sm.observe(r_anvil_empty), [])
+        self.assertEqual(sm.observe(r_anvil_pick), [])
+
+        # Gold Stat Anvil offer too
+        r_gold_anvil = decode_tencent_log_line(
+            make_log_line(
+                {
+                    "form": "game",
+                    "dwSubCmd": 693,
+                    "params": {
+                        "astAugments": [
+                            {"szAugmentName": "ARAM_GoldStatAnvil_Hybrid3"},
+                            {"szAugmentName": "ARAM_GoldStatAnvil_HP"},
+                            {"szAugmentName": "ARAM_GoldStatAnvil_Hybrid1"},
+                        ]
+                    },
+                },
+                puuid,
+                t0 + 5.0,
+            ),
+            key,
+        )
+        r_gold_pick = decode_tencent_log_line(
+            make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 5.5),
+            key,
+        )
+        assert r_gold_anvil and r_gold_pick
+        self.assertEqual(sm.observe(r_gold_anvil), [])
+        self.assertEqual(sm.observe(r_gold_pick), [])
+        self.assertEqual(sm._confirmed_stable_keys, [])
+
+        # Real augment offer afterwards still binds cleanly via 694 -> 696
+        sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 693,
+                        "params": {"astAugments": [{"szAugmentName": "ARAM_Eureka"}, {"szAugmentName": "ARAM_Stats"}, {"szAugmentName": "ARAM_ADAPt"}]},
+                    },
+                    puuid,
+                    t0 + 20.0,
+                ),
+                key,
+            )
+        )
+        pick_acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 21.0),
+                key,
+            )
+        )
+        self.assertEqual(pick_acts[0].picked_key, "ARAM_Eureka")
+        self.assertEqual(sm._confirmed_stable_keys, ["ARAM_Eureka"])
+
+        rec_acts = sm.observe(
+            decode_tencent_log_line(  # type: ignore[arg-type]
+                make_log_line(
+                    {
+                        "form": "game",
+                        "dwSubCmd": 696,
+                        "params": {
+                            "astPlayerHextechAugmentSelectionList": [
+                                {"dwHeroNetID": 701, "astAugments": [{"szAugmentName": "ARAM_Stats"}]},
+                                {"dwHeroNetID": 702, "astAugments": [{"szAugmentName": "ARAM_Eureka"}]},
+                            ]
+                        },
+                    },
+                    puuid,
+                    t0 + 21.5,
+                ),
+                key,
+            )
+        )
+        self.assertEqual(sm.local_hero_net_id, 702)
+        self.assertEqual(rec_acts[0].keys, ["ARAM_Eureka"])
+
+    def test_gdp_status_detection_and_probe(self) -> None:
+        puuid = "synthetic-gdp-001"
+        key = derive_tencent_log_key(puuid)
+        t0 = 1795659000.0
+
+        ln_false = make_raw_log_line("settingEnableChange gdp false", puuid, t0)
+        ln_true = make_raw_log_line("settingEnableChange gdp true", puuid, t0 + 10.0)
+        ln_game = make_log_line({"form": "game", "dwSubCmd": 694, "params": {"dwAugmentIndex": 0}}, puuid, t0 + 20.0)
+
+        rec_f = decode_tencent_log_line(ln_false, key)
+        rec_t = decode_tencent_log_line(ln_true, key)
+        assert rec_f and rec_t
+        self.assertEqual(rec_f.sub_cmd, -1)
+        self.assertIs(rec_f.gdp_enabled, False)
+        self.assertEqual(rec_t.sub_cmd, -1)
+        self.assertIs(rec_t.gdp_enabled, True)
+
+        sm = TencentAugmentStateMachine()
+        self.assertEqual(sm.observe(rec_f), [])
+        self.assertTrue(sm.is_stale(t0))
+
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "main.log"
+            log_path.write_text(ln_true + ln_false, encoding="utf-8")
+            self.assertIs(probe_tencent_gdp_enabled(log_path, key), False)
+
+            log_path.write_text(ln_false + ln_game, encoding="utf-8")
+            self.assertIs(probe_tencent_gdp_enabled(log_path, key), True)
 
 
 if __name__ == "__main__":
